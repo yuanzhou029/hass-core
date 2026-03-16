@@ -26,7 +26,7 @@ concurrency:
 jobs:
   init:
     name: Initialize build
-    if: github.repository_owner == 'yuanzhou029'
+    if: github.repository_owner == 'home-assistant'
     runs-on: ubuntu-latest
     permissions:
       contents: read # To check out the repository
@@ -48,41 +48,35 @@ jobs:
 
       - name: Get information
         id: info
-        run: |
-          echo "Retrieving repository information"
-          # This is a custom implementation for your repository
-          echo "repository=${{ github.repository }}" >> $GITHUB_OUTPUT
-          echo "sha=${{ github.sha }}" >> $GITHUB_OUTPUT
+        uses: home-assistant/actions/helpers/info@master # zizmor: ignore[unpinned-uses]
 
       - name: Get version
         id: version
-        run: |
-          # Custom version detection for your repository
-          # Set a default version or retrieve from your repository tags
-          VERSION="2026.4.0.dev0"  # Set appropriate version for your repository
-          CHANNEL="dev"  # Set appropriate channel for your repository
-          PUBLISH="true"  # Whether to publish builds
-          
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "channel=${CHANNEL}" >> $GITHUB_OUTPUT
-          echo "publish=${PUBLISH}" >> $GITHUB_OUTPUT
+        uses: home-assistant/actions/helpers/version@master # zizmor: ignore[unpinned-uses]
+        with:
+          type: ${{ env.BUILD_TYPE }}
 
-      - name: Download Translations for development
-        run: |
-          # Skip translation check as this is for a custom repository
-          echo "Using custom translation handling for development repository"
+      - name: Verify version
+        uses: home-assistant/actions/helpers/verify-version@master # zizmor: ignore[unpinned-uses]
+        with:
+          ignore-dev: true
 
-      - name: Download Translations for development
+      - name: Fail if translations files are checked in
         run: |
-          # Skip downloading translations for development repository
-          echo "Skipping official translation download for development repository"
-          # If you have custom translations, you can add logic to download them here
+          if [ -n "$(find homeassistant/components/*/translations -type f)" ]; then
+              echo "Translations files are checked in, please remove the following files:"
+              find homeassistant/components/*/translations -type f
+              exit 1
+          fi
 
-      - name: Create placeholder translations archive
+      - name: Download Translations
+        run: python3 -m script.translations download
+        env:
+          LOKALISE_TOKEN: ${{ secrets.LOKALISE_TOKEN }}
+
+      - name: Archive translations
         shell: bash
-        run: |
-          # Create an empty tar file as placeholder
-          tar czf translations.tar.gz --files-from /dev/null
+        run: find ./homeassistant/components/*/translations -name "*.json" | tar zcvf translations.tar.gz -T -
 
       - name: Upload translations
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
@@ -93,7 +87,7 @@ jobs:
 
   build_base:
     name: Build ${{ matrix.arch }} base core image
-    if: github.repository_owner == 'yuanzhou029'
+    if: github.repository_owner == 'home-assistant'
     needs: init
     runs-on: ${{ matrix.os }}
     permissions:
@@ -119,25 +113,23 @@ jobs:
         if: needs.init.outputs.channel == 'dev'
         uses: dawidd6/action-download-artifact@2536c51d3d126276eb39f74d6bc9c72ac6ef30d3 # v16
         with:
-          github_token: ${{secrets.GH_TOKEN}}
-          repo: home-assistant/frontend  # Using official repo for compatibility
+          github_token: ${{secrets.GITHUB_TOKEN}}
+          repo: home-assistant/frontend
           branch: dev
           workflow: nightly.yaml
           workflow_conclusion: success
           name: wheels
-        continue-on-error: true  # Continue if download fails
 
       - name: Download nightly wheels of intents
         if: needs.init.outputs.channel == 'dev'
         uses: dawidd6/action-download-artifact@2536c51d3d126276eb39f74d6bc9c72ac6ef30d3 # v16
         with:
-          github_token: ${{secrets.GH_TOKEN}}
-          repo: OHF-Voice/intents-package  # Using official repo for compatibility
+          github_token: ${{secrets.GITHUB_TOKEN}}
+          repo: OHF-Voice/intents-package
           branch: main
           workflow: nightly.yaml
           workflow_conclusion: success
           name: package
-        continue-on-error: true  # Continue if download fails
 
       - name: Set up Python
         if: needs.init.outputs.channel == 'dev'
@@ -155,67 +147,48 @@ jobs:
           python3 -m pip install "$(grep '^uv' < requirements.txt)"
           uv pip install packaging tomli
           uv pip install .
+          python3 script/version_bump.py nightly --set-nightly-version "${VERSION}"
 
-          # Only run version bump if the target version is different from current
-          CURRENT_VERSION=$(python -c "from homeassistant import const; print(const.__version__)")
-          echo "Current version: $CURRENT_VERSION"
-          echo "Target version: ${VERSION}"
-          
-          if [ "$CURRENT_VERSION" != "${VERSION}" ]; then
-            # Try to generate a new nightly version using current timestamp format
-            TIMESTAMP_VERSION="2026.4.0.dev$(date +%Y%m%d%H%M)"
-            echo "Attempting to bump to: $TIMESTAMP_VERSION"
-            
-            python3 script/version_bump.py nightly --set-nightly-version "$TIMESTAMP_VERSION" || echo "Version bump failed, continuing build"
-          else
-            echo "Versions are equal, skipping version bump"
+          if [[ "$(ls home_assistant_frontend*.whl)" =~ ^home_assistant_frontend-(.*)-py3-none-any.whl$ ]]; then
+            echo "Found frontend wheel, setting version to: ${BASH_REMATCH[1]}"
+            frontend_version="${BASH_REMATCH[1]}" yq \
+              --inplace e -o json \
+              '.requirements = ["home-assistant-frontend=="+env(frontend_version)]' \
+              homeassistant/components/frontend/manifest.json
+
+            sed -i "s|home-assistant-frontend==.*|home-assistant-frontend==${BASH_REMATCH[1]}|" \
+              homeassistant/package_constraints.txt
+
+            sed -i "s|home-assistant-frontend==.*||" requirements_all.txt
           fi
 
-          # Check if frontend wheel exists before adjusting
-          if ls home_assistant_frontend*.whl >/dev/null 2>&1; then
-            if [[ "$(ls home_assistant_frontend*.whl)" =~ ^home_assistant_frontend-(.*)-py3-none-any.whl$ ]]; then
-              echo "Found frontend wheel, setting version to: ${BASH_REMATCH[1]}"
-              frontend_version="${BASH_REMATCH[1]}" yq \
-                --inplace e -o json \
-                '.requirements = ["home-assistant-frontend=="+env(frontend_version)]' \
-                homeassistant/components/frontend/manifest.json
+          if [[ "$(ls home_assistant_intents*.whl)" =~ ^home_assistant_intents-(.*)-py3-none-any.whl$ ]]; then
+            echo "Found intents wheel, setting version to: ${BASH_REMATCH[1]}"
+            yq \
+              --inplace e -o json \
+              'del(.requirements[] | select(contains("home-assistant-intents")))' \
+              homeassistant/components/conversation/manifest.json
 
-              sed -i "s|home-assistant-frontend==.*|home-assistant-frontend==${BASH_REMATCH[1]}|" \
-                homeassistant/package_constraints.txt
+            intents_version="${BASH_REMATCH[1]}" yq \
+              --inplace e -o json \
+              '.requirements += ["home-assistant-intents=="+env(intents_version)]' \
+              homeassistant/components/conversation/manifest.json
 
-              sed -i "s|home-assistant-frontend==.*||" requirements_all.txt
-            fi
-          else
-            echo "No frontend wheel found, skipping frontend version adjustment"
+            sed -i "s|home-assistant-intents==.*|home-assistant-intents==${BASH_REMATCH[1]}|" \
+              homeassistant/package_constraints.txt
+
+            sed -i "s|home-assistant-intents==.*||" requirements_all.txt requirements.txt
           fi
 
-          # Check if intents wheel exists before adjusting
-          if ls home_assistant_intents*.whl >/dev/null 2>&1; then
-            if [[ "$(ls home_assistant_intents*.whl)" =~ ^home_assistant_intents-(.*)-py3-none-any.whl$ ]]; then
-              echo "Found intents wheel, setting version to: ${BASH_REMATCH[1]}"
-              yq \
-                --inplace e -o json \
-                'del(.requirements[] | select(contains("home-assistant-intents")))' \
-                homeassistant/components/conversation/manifest.json
+      - name: Download translations
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: translations
 
-              intents_version="${BASH_REMATCH[1]}" yq \
-                --inplace e -o json \
-                '.requirements += ["home-assistant-intents=="+env(intents_version)]' \
-                homeassistant/components/conversation/manifest.json
-
-              sed -i "s|home-assistant-intents==.*|home-assistant-intents==${BASH_REMATCH[1]}|" \
-                homeassistant/package_constraints.txt
-
-              sed -i "s|home-assistant-intents==.*||" requirements_all.txt requirements.txt
-            fi
-          else
-            echo "No intents wheel found, skipping intents version adjustment"
-          fi
-
-      - name: Skip translations for Chinese-only build
+      - name: Extract translations
         run: |
-          # Skip downloading translations for simplified Chinese-only build
-          echo "Using Chinese-only build without additional translations"
+          tar xvf translations.tar.gz
+          rm translations.tar.gz
 
       - name: Write meta info file
         shell: bash
@@ -223,11 +196,11 @@ jobs:
           echo "${GITHUB_SHA};${GITHUB_REF};${GITHUB_EVENT_NAME};${GITHUB_ACTOR}" > rootfs/OFFICIAL_IMAGE
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
-          password: ${{ secrets.GH_TOKEN }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
@@ -235,7 +208,7 @@ jobs:
           cosign-release: "v2.5.3"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
       - name: Build variables
         id: vars
@@ -244,23 +217,17 @@ jobs:
           ARCH: ${{ matrix.arch }}
         run: |
           echo "base_image=ghcr.io/home-assistant/${ARCH}-homeassistant-base:${BASE_IMAGE_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "cache_image=ghcr.io/yuanzhou029/${ARCH}-homeassistant:latest" >> "$GITHUB_OUTPUT"
+          echo "cache_image=ghcr.io/home-assistant/${ARCH}-homeassistant:latest" >> "$GITHUB_OUTPUT"
           echo "created=$(date --rfc-3339=seconds --utc)" >> "$GITHUB_OUTPUT"
-          echo "platform=linux/${ARCH}" >> "$GITHUB_OUTPUT"
 
       - name: Verify base image signature
         env:
           BASE_IMAGE: ${{ steps.vars.outputs.base_image }}
         run: |
-          # Check if cosign is available before attempting verification
-          if command -v cosign &> /dev/null; then
-            cosign verify \
-              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-              --certificate-identity-regexp "https://github.com/home-assistant/docker/.*" \
-              "${BASE_IMAGE}" || echo "Base image verification failed or skipped"
-          else
-            echo "cosign not available, skipping base image verification"
-          fi
+          cosign verify \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp "https://github.com/home-assistant/docker/.*" \
+            "${BASE_IMAGE}"
 
       - name: Verify cache image signature
         id: cache
@@ -268,28 +235,23 @@ jobs:
         env:
           CACHE_IMAGE: ${{ steps.vars.outputs.cache_image }}
         run: |
-          # Check if cosign is available before attempting verification
-          if command -v cosign &> /dev/null; then
-            cosign verify \
-              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-              --certificate-identity-regexp "https://github.com/yuanzhou029/core/.*" \
-              "${CACHE_IMAGE}" || echo "Cache image verification failed or skipped"
-          else
-            echo "cosign not available, skipping cache image verification"
-          fi
+          cosign verify \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp "https://github.com/home-assistant/core/.*" \
+            "${CACHE_IMAGE}"
 
       - name: Build base image
         id: build
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
         with:
           context: .
           file: ./Dockerfile
-          platforms: linux/${{ matrix.arch }}
+          platforms: ${{ steps.vars.outputs.platform }}
           push: true
           cache-from: ${{ steps.cache.outcome == 'success' && steps.vars.outputs.cache_image || '' }}
           build-args: |
             BUILD_FROM=${{ steps.vars.outputs.base_image }}
-          tags: ghcr.io/yuanzhou029/${{ matrix.arch }}-homeassistant:${{ needs.init.outputs.version }}
+          tags: ghcr.io/home-assistant/${{ matrix.arch }}-homeassistant:${{ needs.init.outputs.version }}
           outputs: type=image,push=true,compression=zstd,compression-level=9,force-compression=true,oci-mediatypes=true
           labels: |
             io.hass.arch=${{ matrix.arch }}
@@ -303,287 +265,11 @@ jobs:
           VERSION: ${{ needs.init.outputs.version }}
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
-          # Check if cosign is available before attempting signing
-          if command -v cosign &> /dev/null; then
-            cosign sign --yes "ghcr.io/yuanzhou029/${ARCH}-homeassistant:${VERSION}@${DIGEST}" || echo "Image signing failed or skipped"
-          else
-            echo "cosign not available, skipping image signing"
-          fi
-
-      # Generate all Docker tags based on version string
-      # Version format: YYYY.MM.PATCH, YYYY.MM.PATCHbN (beta), or YYYY.MM.PATCH.devYYYYMMDDHHMM (dev)
-      # Examples:
-      #   2025.12.1     (stable)    -> tags: 2025.12.1, 2025.12, stable, latest, beta, rc
-      #   2025.12.0b3   (beta)      -> tags: 2025.12.0b3, beta, rc
-      #   2025.12.0.dev202511250240 -> tags: 2025.12.0.dev202511250240, dev
-      - name: Generate Docker metadata
-        id: meta
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
-        with:
-          images: ${{ matrix.registry }}/hass-core
-          sep-tags: ","
-          tags: |
-            type=raw,value=${{ needs.init.outputs.version }},priority=9999
-            type=raw,value=dev,enable=${{ contains(needs.init.outputs.version, 'd') }}
-            type=raw,value=beta,enable=${{ !contains(needs.init.outputs.version, 'd') }}
-            type=raw,value=rc,enable=${{ !contains(needs.init.outputs.version, 'd') }}
-            type=raw,value=stable,enable=${{ !contains(needs.init.outputs.version, 'd') && !contains(needs.init.outputs.version, 'b') }}
-            type=raw,value=latest,enable=${{ !contains(needs.init.outputs.version, 'd') && !contains(needs.init.outputs.version, 'b') }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ needs.init.outputs.version }},enable=${{ !contains(needs.init.outputs.version, 'd') && !contains(needs.init.outputs.version, 'b') }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.7.1
-
-      - name: Copy architecture images to DockerHub
-        if: matrix.registry == 'docker.io/yuanzhou029'
-        shell: bash
-        env:
-          ARCHITECTURES: ${{ needs.init.outputs.architectures }}
-          VERSION: ${{ needs.init.outputs.version }}
-        run: |
-          # Use imagetools to copy image blobs directly between registries
-          # This preserves provenance/attestations and seems to be much faster than pull/push
-          ARCHS=$(echo "${ARCHITECTURES}" | jq -r '.[]')
-          for arch in $ARCHS; do
-            echo "Copying ${arch} image to DockerHub..."
-            for attempt in 1 2 3; do
-              if docker buildx imagetools create \
-                --tag "${matrix.registry}/${arch}-homeassistant:${VERSION}" \
-                "ghcr.io/yuanzhou029/${arch}-homeassistant:${VERSION}"; then
-                break
-              fi
-              echo "Attempt ${attempt} failed, retrying in 10 seconds..."
-              sleep 10
-              if [ "${attempt}" -eq 3 ]; then
-                echo "Failed after 3 attempts"
-                exit 1
-              fi
-            done
-            # Check if cosign is available before attempting signing
-            if command -v cosign &> /dev/null; then
-              cosign sign --yes "${matrix.registry}/${arch}-homeassistant:${VERSION}" || echo "Signing for ${arch} failed or skipped"
-            else
-              echo "cosign not available, skipping signing for ${arch}"
-            fi
-          done
-
-      - name: Create and push multi-arch manifests
-        shell: bash
-        env:
-          ARCHITECTURES: ${{ needs.init.outputs.architectures }}
-          REGISTRY: ${{ matrix.registry }}
-          VERSION: ${{ needs.init.outputs.version }}
-          META_TAGS: ${{ steps.meta.outputs.tags }}
-        run: |
-          # Build list of architecture images dynamically
-          ARCHS=$(echo "${ARCHITECTURES}" | jq -r '.[]')
-          ARCH_IMAGES=()
-          for arch in $ARCHS; do
-            # Always use consistent format for each registry  
-            ARCH_IMAGES+=("${REGISTRY}/${arch}-homeassistant:${VERSION}")
-          done
-
-          # Build list of all tags for single manifest creation
-          # Note: Using sep-tags=',' in metadata-action for easier parsing
-          TAG_ARGS=()
-          IFS=',' read -ra TAGS <<< "${META_TAGS}"
-          for tag in "${TAGS[@]}"; do
-            # Only add tag if it's not empty
-            if [ -n "$tag" ]; then
-              TAG_ARGS+=("--tag" "${tag}")
-            fi
-          done
-
-          # Create manifest with ALL tags in a single operation (much faster!)
-          echo "Creating multi-arch manifest with tags: ${TAGS[*]}"
-          if [ ${#TAG_ARGS[@]} -gt 0 ] && [ ${#ARCH_IMAGES[@]} -gt 0 ]; then
-            docker buildx imagetools create "${TAG_ARGS[@]}" "${ARCH_IMAGES[@]}"
-          else
-            echo "No tags or images to create manifest for"
-          fi
-
-          # Sign each tag separately (signing requires individual tag names)
-          echo "Signing all tags..."
-          for tag in "${TAGS[@]}"; do
-            if [ -n "$tag" ]; then
-              echo "Signing ${tag}"
-              # Check if cosign is available before attempting signing
-              if command -v cosign &> /dev/null; then
-                cosign sign --yes "${tag}" || echo "Signing for ${tag} failed or skipped"
-              else
-                echo "cosign not available, skipping signing for ${tag}"
-              fi
-            fi
-          done
-
-          echo "All manifests created and signed successfully"
-
-  publish_container:
-    name: Publish meta container for ${{ matrix.registry }}
-    environment: ${{ needs.init.outputs.channel }}
-    if: github.repository_owner == 'yuanzhou029'
-    needs: ["init", "build_base"]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read # To check out the repository
-      packages: write # To push to GHCR
-      id-token: write # For cosign signing
-    strategy:
-      fail-fast: false
-      matrix:
-        registry: ["ghcr.io/yuanzhou029", "docker.io/yz029"]
-    steps:
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
-        with:
-          cosign-release: "v2.5.3"
-
-      - name: Login to DockerHub
-        if: matrix.registry == 'docker.io/yz029'
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GH_TOKEN }}
-
-      - name: Verify architecture image signatures
-        shell: bash
-        env:
-          ARCHITECTURES: ${{ needs.init.outputs.architectures }}
-          VERSION: ${{ needs.init.outputs.version }}
-        run: |
-          ARCHS=$(echo "${ARCHITECTURES}" | jq -r '.[]')
-          for arch in $ARCHS; do
-            echo "Verifying ${arch} image signature..."
-            # Check if cosign is available before attempting verification
-            if command -v cosign &> /dev/null; then
-              cosign verify \
-                --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-                --certificate-identity-regexp https://github.com/yuanzhou029/core/.* \
-                "ghcr.io/yuanzhou029/${arch}-homeassistant:${VERSION}" || echo "Verification for ${arch} failed or skipped"
-            else
-              echo "cosign not available, skipping signature verification for ${arch}"
-            fi
-          done
-          echo "✓ All images verified successfully"
-
-      # Generate all Docker tags based on version string
-      # Version format: YYYY.MM.PATCH, YYYY.MM.PATCHbN (beta), or YYYY.MM.PATCH.devYYYYMMDDHHMM (dev)
-      # Examples:
-      #   2025.12.1     (stable)    -> tags: 2025.12.1, 2025.12, stable, latest, beta, rc
-      #   2025.12.0b3   (beta)      -> tags: 2025.12.0b3, beta, rc
-      #   2025.12.0.dev202511250240 -> tags: 2025.12.0.dev202511250240, dev
-      - name: Generate Docker metadata
-        id: meta
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
-        with:
-          images: ${{ matrix.registry }}/hass-core
-          sep-tags: ","
-          tags: |
-            type=raw,value=${{ needs.init.outputs.version }},priority=9999
-            type=raw,value=dev,enable=${{ contains(needs.init.outputs.version, 'd') }}
-            type=raw,value=beta,enable=${{ !contains(needs.init.outputs.version, 'd') }}
-            type=raw,value=rc,enable=${{ !contains(needs.init.outputs.version, 'd') }}
-            type=raw,value=stable,enable=${{ !contains(needs.init.outputs.version, 'd') && !contains(needs.init.outputs.version, 'b') }}
-            type=raw,value=latest,enable=${{ !contains(needs.init.outputs.version, 'd') && !contains(needs.init.outputs.version, 'b') }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ needs.init.outputs.version }},enable=${{ !contains(needs.init.outputs.version, 'd') && !contains(needs.init.outputs.version, 'b') }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.7.1
-
-      - name: Copy architecture images to DockerHub
-        if: matrix.registry == 'docker.io/yz029'
-        shell: bash
-        env:
-          ARCHITECTURES: ${{ needs.init.outputs.architectures }}
-          VERSION: ${{ needs.init.outputs.version }}
-        run: |
-          # Use imagetools to copy image blobs directly between registries
-          # This preserves provenance/attestations and seems to be much faster than pull/push
-          ARCHS=$(echo "${ARCHITECTURES}" | jq -r '.[]')
-          for arch in $ARCHS; do
-            echo "Copying ${arch} image to DockerHub..."
-            for attempt in 1 2 3; do
-              if docker buildx imagetools create \
-                --tag "docker.io/yz029/hass-core:${arch}-homeassistant-${VERSION}" \
-                "ghcr.io/yuanzhou029/${arch}-homeassistant:${VERSION}"; then
-                break
-              fi
-              echo "Attempt ${attempt} failed, retrying in 10 seconds..."
-              sleep 10
-              if [ "${attempt}" -eq 3 ]; then
-                echo "Failed after 3 attempts"
-                exit 1
-              fi
-            done
-            # Check if cosign is available before attempting signing
-            if command -v cosign &> /dev/null; then
-              cosign sign --yes "docker.io/yz029/hass-core:${arch}-homeassistant-${VERSION}" || echo "Signing for ${arch} failed or skipped"
-            else
-              echo "cosign not available, skipping signing for ${arch}"
-            fi
-          done
-
-      - name: Create and push multi-arch manifests
-        shell: bash
-        env:
-          ARCHITECTURES: ${{ needs.init.outputs.architectures }}
-          REGISTRY: ${{ matrix.registry }}
-          VERSION: ${{ needs.init.outputs.version }}
-          META_TAGS: ${{ steps.meta.outputs.tags }}
-        run: |
-          # Build list of architecture images dynamically
-          ARCHS=$(echo "${ARCHITECTURES}" | jq -r '.[]')
-          ARCH_IMAGES=()
-          for arch in $ARCHS; do
-            # Always use consistent format for each registry  
-            ARCH_IMAGES+=("${REGISTRY}/${arch}-homeassistant:${VERSION}")
-          done
-
-          # Build list of all tags for single manifest creation
-          # Note: Using sep-tags=',' in metadata-action for easier parsing
-          TAG_ARGS=()
-          IFS=',' read -ra TAGS <<< "${META_TAGS}"
-          for tag in "${TAGS[@]}"; do
-            # Only add tag if it's not empty
-            if [ -n "$tag" ]; then
-              TAG_ARGS+=("--tag" "${tag}")
-            fi
-          done
-
-          # Create manifest with ALL tags in a single operation (much faster!)
-          echo "Creating multi-arch manifest with tags: ${TAGS[*]}"
-          if [ ${#TAG_ARGS[@]} -gt 0 ] && [ ${#ARCH_IMAGES[@]} -gt 0 ]; then
-            docker buildx imagetools create "${TAG_ARGS[@]}" "${ARCH_IMAGES[@]}"
-          else
-            echo "No tags or images to create manifest for"
-          fi
-
-          # Sign each tag separately (signing requires individual tag names)
-          echo "Signing all tags..."
-          for tag in "${TAGS[@]}"; do
-            if [ -n "$tag" ]; then
-              echo "Signing ${tag}"
-              # Check if cosign is available before attempting signing
-              if command -v cosign &> /dev/null; then
-                cosign sign --yes "${tag}" || echo "Signing for ${tag} failed or skipped"
-              else
-                echo "cosign not available, skipping signing for ${tag}"
-              fi
-            fi
-          done
-
-          echo "All manifests created and signed successfully"
+          cosign sign --yes "ghcr.io/home-assistant/${ARCH}-homeassistant:${VERSION}@${DIGEST}"
 
   build_machine:
     name: Build ${{ matrix.machine }} machine core image
-    if: github.repository_owner == 'yuanzhou029'
+    if: github.repository_owner == 'home-assistant'
     needs: ["init", "build_base"]
     runs-on: ${{ matrix.runs-on }}
     permissions:
@@ -642,11 +328,11 @@ jobs:
           fi
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
-          password: ${{ secrets.GH_TOKEN }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build base image
         uses: home-assistant/builder@6cb4fd3d1338b6e22d0958a4bcb53e0965ea63b4 # 2026.02.1
@@ -661,7 +347,7 @@ jobs:
   publish_ha:
     name: Publish version files
     environment: ${{ needs.init.outputs.channel }}
-    if: github.repository_owner == 'yuanzhou029'
+    if: github.repository_owner == 'home-assistant'
     needs: ["init", "build_machine"]
     runs-on: ubuntu-latest
     permissions:
@@ -698,6 +384,144 @@ jobs:
           channel: beta
           exclude-list: '["odroid-xu","qemuarm","qemux86","raspberrypi","raspberrypi2","raspberrypi3","raspberrypi4","tinker"]'
 
+  publish_container:
+    name: Publish meta container for ${{ matrix.registry }}
+    environment: ${{ needs.init.outputs.channel }}
+    if: github.repository_owner == 'home-assistant'
+    needs: ["init", "build_base"]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # To check out the repository
+      packages: write # To push to GHCR
+      id-token: write # For cosign signing
+    strategy:
+      fail-fast: false
+      matrix:
+        registry: ["ghcr.io/home-assistant", "docker.io/homeassistant"]
+    steps:
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
+        with:
+          cosign-release: "v2.5.3"
+
+      - name: Login to DockerHub
+        if: matrix.registry == 'docker.io/homeassistant'
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify architecture image signatures
+        shell: bash
+        env:
+          ARCHITECTURES: ${{ needs.init.outputs.architectures }}
+          VERSION: ${{ needs.init.outputs.version }}
+        run: |
+          ARCHS=$(echo "${ARCHITECTURES}" | jq -r '.[]')
+          for arch in $ARCHS; do
+            echo "Verifying ${arch} image signature..."
+            cosign verify \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              --certificate-identity-regexp https://github.com/home-assistant/core/.* \
+              "ghcr.io/home-assistant/${arch}-homeassistant:${VERSION}"
+          done
+          echo "✓ All images verified successfully"
+
+      # Generate all Docker tags based on version string
+      # Version format: YYYY.MM.PATCH, YYYY.MM.PATCHbN (beta), or YYYY.MM.PATCH.devYYYYMMDDHHMM (dev)
+      # Examples:
+      #   2025.12.1     (stable)    -> tags: 2025.12.1, 2025.12, stable, latest, beta, rc
+      #   2025.12.0b3   (beta)      -> tags: 2025.12.0b3, beta, rc
+      #   2025.12.0.dev202511250240 -> tags: 2025.12.0.dev202511250240, dev
+      - name: Generate Docker metadata
+        id: meta
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
+        with:
+          images: ${{ matrix.registry }}/home-assistant
+          sep-tags: ","
+          tags: |
+            type=raw,value=${{ needs.init.outputs.version }},priority=9999
+            type=raw,value=dev,enable=${{ contains(needs.init.outputs.version, 'd') }}
+            type=raw,value=beta,enable=${{ !contains(needs.init.outputs.version, 'd') }}
+            type=raw,value=rc,enable=${{ !contains(needs.init.outputs.version, 'd') }}
+            type=raw,value=stable,enable=${{ !contains(needs.init.outputs.version, 'd') && !contains(needs.init.outputs.version, 'b') }}
+            type=raw,value=latest,enable=${{ !contains(needs.init.outputs.version, 'd') && !contains(needs.init.outputs.version, 'b') }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.init.outputs.version }},enable=${{ !contains(needs.init.outputs.version, 'd') && !contains(needs.init.outputs.version, 'b') }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v3.7.1
+
+      - name: Copy architecture images to DockerHub
+        if: matrix.registry == 'docker.io/homeassistant'
+        shell: bash
+        env:
+          ARCHITECTURES: ${{ needs.init.outputs.architectures }}
+          VERSION: ${{ needs.init.outputs.version }}
+        run: |
+          # Use imagetools to copy image blobs directly between registries
+          # This preserves provenance/attestations and seems to be much faster than pull/push
+          ARCHS=$(echo "${ARCHITECTURES}" | jq -r '.[]')
+          for arch in $ARCHS; do
+            echo "Copying ${arch} image to DockerHub..."
+            for attempt in 1 2 3; do
+              if docker buildx imagetools create \
+                --tag "docker.io/homeassistant/${arch}-homeassistant:${VERSION}" \
+                "ghcr.io/home-assistant/${arch}-homeassistant:${VERSION}"; then
+                break
+              fi
+              echo "Attempt ${attempt} failed, retrying in 10 seconds..."
+              sleep 10
+              if [ "${attempt}" -eq 3 ]; then
+                echo "Failed after 3 attempts"
+                exit 1
+              fi
+            done
+            cosign sign --yes "docker.io/homeassistant/${arch}-homeassistant:${VERSION}"
+          done
+
+      - name: Create and push multi-arch manifests
+        shell: bash
+        env:
+          ARCHITECTURES: ${{ needs.init.outputs.architectures }}
+          REGISTRY: ${{ matrix.registry }}
+          VERSION: ${{ needs.init.outputs.version }}
+          META_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          # Build list of architecture images dynamically
+          ARCHS=$(echo "${ARCHITECTURES}" | jq -r '.[]')
+          ARCH_IMAGES=()
+          for arch in $ARCHS; do
+            ARCH_IMAGES+=("${REGISTRY}/${arch}-homeassistant:${VERSION}")
+          done
+
+          # Build list of all tags for single manifest creation
+          # Note: Using sep-tags=',' in metadata-action for easier parsing
+          TAG_ARGS=()
+          IFS=',' read -ra TAGS <<< "${META_TAGS}"
+          for tag in "${TAGS[@]}"; do
+            TAG_ARGS+=("--tag" "${tag}")
+          done
+
+          # Create manifest with ALL tags in a single operation (much faster!)
+          echo "Creating multi-arch manifest with tags: ${TAGS[*]}"
+          docker buildx imagetools create "${TAG_ARGS[@]}" "${ARCH_IMAGES[@]}"
+
+          # Sign each tag separately (signing requires individual tag names)
+          echo "Signing all tags..."
+          for tag in "${TAGS[@]}"; do
+            echo "Signing ${tag}"
+            cosign sign --yes "${tag}"
+          done
+
+          echo "All manifests created and signed successfully"
+
   build_python:
     name: Build PyPi package
     environment: ${{ needs.init.outputs.channel }}
@@ -706,7 +530,7 @@ jobs:
     permissions:
       contents: read # To check out the repository
       id-token: write # For PyPI trusted publishing
-    if: github.repository_owner == 'yuanzhou029' && needs.init.outputs.publish == 'true'
+    if: github.repository_owner == 'home-assistant' && needs.init.outputs.publish == 'true'
     steps:
       - name: Checkout the repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -718,10 +542,15 @@ jobs:
         with:
           python-version-file: ".python-version"
 
-      - name: Skip translations for Chinese-only build
+      - name: Download translations
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: translations
+
+      - name: Extract translations
         run: |
-          # Skip downloading translations for simplified Chinese-only build
-          echo "Using Chinese-only build without additional translations"
+          tar xvf translations.tar.gz
+          rm translations.tar.gz
 
       - name: Build package
         shell: bash
@@ -745,10 +574,10 @@ jobs:
       attestations: write # For build provenance attestation
       id-token: write # For build provenance attestation
     needs: ["init"]
-    if: github.repository_owner == 'yuanzhou029' && needs.init.outputs.channel != 'dev'  # Skip dev builds
+    if: github.repository_owner == 'home-assistant'
     env:
-      HASSFEST_IMAGE_NAME: ghcr.io/yuanzhou029/hassfest
-      HASSFEST_IMAGE_TAG: ghcr.io/yuanzhou029/hassfest:${{ needs.init.outputs.version }}
+      HASSFEST_IMAGE_NAME: ghcr.io/home-assistant/hassfest
+      HASSFEST_IMAGE_TAG: ghcr.io/home-assistant/hassfest:${{ needs.init.outputs.version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -756,14 +585,14 @@ jobs:
           persist-credentials: false
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
-          password: ${{ secrets.GH_TOKEN }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build Docker image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
         with:
           context: . # So action will not pull the repository again
           file: ./script/hassfest/docker/Dockerfile
@@ -771,15 +600,12 @@ jobs:
           tags: ${{ env.HASSFEST_IMAGE_TAG }}
 
       - name: Run hassfest against core
-        run: |
-          # Run hassfest to validate the custom Chinese-only build
-          echo "Running hassfest against simplified Chinese-only build"
-          docker run --rm -v "${GITHUB_WORKSPACE}":/github/workspace "${HASSFEST_IMAGE_TAG}" --core-path=/github/workspace
+        run: docker run --rm -v "${GITHUB_WORKSPACE}":/github/workspace "${HASSFEST_IMAGE_TAG}" --core-path=/github/workspace
 
       - name: Push Docker image
         if: needs.init.outputs.channel != 'dev' && needs.init.outputs.publish == 'true'
         id: push
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
         with:
           context: . # So action will not pull the repository again
           file: ./script/hassfest/docker/Dockerfile

@@ -147,8 +147,8 @@ jobs:
           ENABLE_HEADLESS: "1"
           REQUIRE_SQLALCHEMY_CEXT: "1"
         run: |
-          # 安装较新版本的构建依赖，以支持 license-files 字段
-          python -m pip install --upgrade pip build>=1.0.0 setuptools>=60.0.0 wheel>=0.38.0 twine
+          # 安装构建依赖，包括 twine
+          python -m pip install --upgrade pip build setuptools wheel twine
           
           echo "Building wheels for core dependencies..."
           
@@ -248,8 +248,8 @@ jobs:
           ENABLE_HEADLESS: "1"
           REQUIRE_SQLALCHEMY_CEXT: "1"
         run: |
-          # 安装较新版本构建依赖，以支持 license-files 字段
-          python -m pip install --upgrade pip build>=1.0.0 setuptools>=60.0.0 wheel>=0.38.0 twine
+          # 安装构建依赖，包括 twine
+          python -m pip install --upgrade pip build setuptools wheel twine
           
           echo "Building wheels for integration dependencies..."
           
