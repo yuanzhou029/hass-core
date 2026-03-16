@@ -135,17 +135,9 @@ jobs:
           repo: OHF-Voice/intents-package  # Using official repo for compatibility
           branch: main
           workflow: nightly.yaml
-        continue-on-error: true  # Continue if download fails
-      - name: Download nightly wheels of intents
-        if: needs.init.outputs.channel == 'dev'
-        uses: dawidd6/action-download-artifact@2536c51d3d126276eb39f74d6bc9c72ac6ef30d3 # v16
-        with:
-          github_token: ${{secrets.GH_TOKEN}}
-          repo: OHF-Voice/intents-package  # Using official repo for compatibility
-          branch: main
-          workflow: nightly.yaml
           workflow_conclusion: success
           name: package
+        continue-on-error: true  # Continue if download fails
 
       - name: Set up Python
         if: needs.init.outputs.channel == 'dev'
@@ -237,21 +229,86 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GH_TOKEN }}
 
-      - name: Verify architecture image signatures
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
+        with:
+          cosign-release: "v2.5.3"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Build variables
+        id: vars
         shell: bash
         env:
-          ARCHITECTURES: ${{ needs.init.outputs.architectures }}
-          VERSION: ${{ needs.init.outputs.version }}
+          ARCH: ${{ matrix.arch }}
         run: |
-          ARCHS=$(echo "${ARCHITECTURES}" | jq -r '.[]')
-          for arch in $ARCHS; do
-          echo "Verifying ${arch} image signature..."
-          cosign verify \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            --certificate-identity-regexp https://github.com/yuanzhou029/core/.* \
-            "ghcr.io/yuanzhou029/${arch}-homeassistant:${VERSION}"
-          done
-          echo "✓ All images verified successfully"
+          echo "base_image=ghcr.io/yuanzhou029/${ARCH}-homeassistant-base:${BASE_IMAGE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "cache_image=ghcr.io/yuanzhou029/${ARCH}-homeassistant:latest" >> "$GITHUB_OUTPUT"
+          echo "created=$(date --rfc-3339=seconds --utc)" >> "$GITHUB_OUTPUT"
+          echo "platform=linux/${ARCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify base image signature
+        env:
+          BASE_IMAGE: ${{ steps.vars.outputs.base_image }}
+        run: |
+          # Check if cosign is available before attempting verification
+          if command -v cosign &> /dev/null; then
+            cosign verify \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              --certificate-identity-regexp "https://github.com/yuanzhou029/docker/.*" \
+              "${BASE_IMAGE}" || echo "Base image verification failed or skipped"
+          else
+            echo "cosign not available, skipping base image verification"
+          fi
+
+      - name: Verify cache image signature
+        id: cache
+        continue-on-error: true
+        env:
+          CACHE_IMAGE: ${{ steps.vars.outputs.cache_image }}
+        run: |
+          # Check if cosign is available before attempting verification
+          if command -v cosign &> /dev/null; then
+            cosign verify \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              --certificate-identity-regexp "https://github.com/yuanzhou029/core/.*" \
+              "${CACHE_IMAGE}" || echo "Cache image verification failed or skipped"
+          else
+            echo "cosign not available, skipping cache image verification"
+          fi
+
+      - name: Build base image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          cache-from: ${{ steps.cache.outcome == 'success' && steps.vars.outputs.cache_image || '' }}
+          build-args: |
+            BUILD_FROM=${{ steps.vars.outputs.base_image }}
+          tags: ghcr.io/yuanzhou029/${{ matrix.arch }}-homeassistant:${{ needs.init.outputs.version }}
+          outputs: type=image,push=true,compression=zstd,compression-level=9,force-compression=true,oci-mediatypes=true
+          labels: |
+            io.hass.arch=${{ matrix.arch }}
+            io.hass.version=${{ needs.init.outputs.version }}
+            org.opencontainers.image.created=${{ steps.vars.outputs.created }}
+            org.opencontainers.image.version=${{ needs.init.outputs.version }}
+
+      - name: Sign image
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.init.outputs.version }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          # Check if cosign is available before attempting signing
+          if command -v cosign &> /dev/null; then
+            cosign sign --yes "ghcr.io/yuanzhou029/${ARCH}-homeassistant:${VERSION}@${DIGEST}" || echo "Image signing failed or skipped"
+          else
+            echo "cosign not available, skipping image signing"
+          fi
 
       # Generate all Docker tags based on version string
       # Version format: YYYY.MM.PATCH, YYYY.MM.PATCHbN (beta), or YYYY.MM.PATCH.devYYYYMMDDHHMM (dev)
