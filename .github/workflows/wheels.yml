@@ -1,6 +1,6 @@
-# yaml-lint disable-line rule:truthy
 name: Build wheels
 
+# yamllint disable-line rule:truthy
 on:
   workflow_dispatch:
   schedule:
@@ -16,9 +16,7 @@ on:
       - "requirements.txt"
       - "script/gen_requirements_all.py"
 
-permissions:
-  contents: read
-  packages: write
+permissions: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name}}
@@ -55,7 +53,7 @@ jobs:
           if [[ "${GITHUB_EVENT_NAME}" =~ (schedule|workflow_dispatch) ]]; then
             touch requirements_diff.txt
           else
-            curl -s -o requirements_diff.txt https://raw.githubusercontent.com/yuanzhou029/hass-core/main/requirements.txt
+            curl -s -o requirements_diff.txt https://raw.githubusercontent.com/home-assistant/core/master/requirements.txt
           fi
 
       - name: Write env-file
@@ -63,9 +61,15 @@ jobs:
           (
             echo "GRPC_PYTHON_BUILD_SYSTEM_OPENSSL=true"
             echo "GRPC_PYTHON_BUILD_WITH_CYTHON=true"
+
+            # Fix out of memory issues with rust
             echo "CARGO_NET_GIT_FETCH_WITH_CLI=true"
+
+            # OpenCV headless installation
             echo "CI_BUILD=1"
             echo "ENABLE_HEADLESS=1"
+
+            # Use C-Extension for SQLAlchemy
             echo "REQUIRE_SQLALCHEMY_CEXT=1"
           ) > .env_file
 
@@ -116,11 +120,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Clean build cache
-        run: |
-          rm -rf build/ dist/ *.egg-info homeassistant.egg-info/
-          find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
-
       - name: Download env_file
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
@@ -133,56 +132,27 @@ jobs:
 
       - name: Adjust build env
         run: |
+          # Don't build wheels for uv as uv requires a greater version of rust as currently available on alpine
           sed -i "/uv/d" requirements.txt
           sed -i "/uv/d" requirements_diff.txt
 
-      - name: Build Core wheels
-        env:
-          GRPC_PYTHON_BUILD_SYSTEM_OPENSSL: "true"
-          GRPC_PYTHON_BUILD_WITH_CYTHON: "true"
-          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-          CI_BUILD: "1"
-          ENABLE_HEADLESS: "1"
-          REQUIRE_SQLALCHEMY_CEXT: "1"
-        run: |
-          python -m pip install --upgrade pip build "setuptools>=75.1.0" "wheel>=0.43.0" "twine>=5.0.0"
-          
-          echo "Building wheels for core dependencies..."
-          mkdir -p dist
-          
-          PACKAGES_TO_BUILD="ciso8601 cryptography Pillow orjson PyTurboJPEG zeroconf"
-          
-          for package in $PACKAGES_TO_BUILD; do
-            PACKAGE_LINE=$(grep "^$package==" requirements.txt | head -n 1)
-            if [ -n "$PACKAGE_LINE" ]; then
-              echo "Building wheel for $PACKAGE_LINE"
-              pip wheel --wheel-dir dist --no-deps "$PACKAGE_LINE" || echo "Failed to build $package, skipping..."
-            else
-              echo "Building wheel for $package (latest version)"
-              pip wheel --wheel-dir dist --no-deps "$package" || echo "Failed to build $package, skipping..."
-            fi
-          done
-          
-          echo "Core wheel building completed."
-          ls -la dist/ || echo "No wheels built"
-
-      - name: Upload Core wheels to GitHub Packages
-        env:
-          TWINE_USERNAME: ${{ github.actor }}
-          TWINE_PASSWORD: ${{ secrets.GH_TOKEN }}
-          TWINE_REPOSITORY_URL: https://pypi.pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/
-        run: |
-          if [ -n "$(ls dist/*.whl 2>/dev/null)" ]; then
-            echo "Uploading core wheels for ${{ matrix.arch }} to GitHub Packages..."
-            python -m twine upload --skip-existing --repository-url $TWINE_REPOSITORY_URL dist/*.whl || true
-            echo "Successfully uploaded core wheels to GitHub Packages."
-          else
-            echo "No core wheel files found in dist/ to upload to GitHub Packages."
-          fi
+      - name: Build wheels
+        uses: home-assistant/wheels@e5742a69d69f0e274e2689c998900c7d19652c21 # 2025.12.0
+        with:
+          abi: ${{ matrix.abi }}
+          tag: musllinux_1_2
+          arch: ${{ matrix.arch }}
+          wheels-key: ${{ secrets.PYPI_API_TOKEN }}
+          env-file: true
+          apk: "libffi-dev;openssl-dev;yaml-dev;nasm;zlib-ng-dev"
+          skip-binary: aiohttp;multidict;propcache;yarl;SQLAlchemy
+          constraints: "homeassistant/package_constraints.txt"
+          requirements-diff: "requirements_diff.txt"
+          requirements: "requirements.txt"
 
   integrations:
-    name: Build Integration wheels ${{ matrix.abi }} for ${{ matrix.arch }}
-    if: github.repository_owner == 'yuanzhou029'
+    name: Build wheels ${{ matrix.abi }} for ${{ matrix.arch }}
+    if: github.repository_owner == 'home-assistant'
     needs: init
     runs-on: ${{ matrix.os }}
     strategy:
@@ -201,11 +171,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Clean build cache
-        run: |
-          rm -rf build/ dist/ *.egg-info homeassistant.egg-info/
-          find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
-
       - name: Download env_file
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
@@ -223,62 +188,22 @@ jobs:
 
       - name: Adjust build env
         run: |
+          # Do not pin numpy in wheels building
           sed -i "/numpy/d" homeassistant/package_constraints.txt
+          # Don't build wheels for uv as uv requires a greater version of rust as currently available on alpine
           sed -i "/uv/d" requirements.txt
           sed -i "/uv/d" requirements_diff.txt
 
-      - name: Build Integration wheels
-        env:
-          GRPC_PYTHON_BUILD_SYSTEM_OPENSSL: "true"
-          GRPC_PYTHON_BUILD_WITH_CYTHON: "true"
-          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-          CI_BUILD: "1"
-          ENABLE_HEADLESS: "1"
-          REQUIRE_SQLALCHEMY_CEXT: "1"
-        run: |
-          python -m pip install --upgrade pip build "setuptools>=75.1.0" "wheel>=0.43.0" "twine>=5.0.0"
-          
-          echo "Building wheels for integration dependencies..."
-          mkdir -p dist
-          
-          if [ "${{ matrix.arch }}" = "amd64" ]; then
-            REQ_FILE="requirements_all_wheels_amd64.txt"
-          else
-            REQ_FILE="requirements_all_wheels_aarch64.txt"
-          fi
-          
-          if [ -f "$REQ_FILE" ]; then
-            echo "Using requirements file: $REQ_FILE"
-            while IFS= read -r line; do
-              [[ "$line" =~ ^[[:space:]]*# ]] && continue
-              [[ -z "$line" ]] && continue
-              if [[ "$line" =~ ^[a-zA-Z] ]]; then
-                echo "Building wheel for: $line"
-                pip wheel --wheel-dir dist --no-deps "$line" || echo "Failed to build $line, skipping..."
-              fi
-            done < "$REQ_FILE"
-          else
-            echo "Requirements file $REQ_FILE not found, building common integration packages"
-            PACKAGES_TO_BUILD="pybluez ffmpeg-python pytz requests-oauthlib"
-            for package in $PACKAGES_TO_BUILD; do
-              echo "Building wheel for $package"
-              pip wheel --wheel-dir dist --no-deps "$package" || echo "Failed to build $package, skipping..."
-            done
-          fi
-          
-          echo "Integration wheel building completed."
-          ls -la dist/ || echo "No wheels built"
-
-      - name: Upload Integration wheels to GitHub Packages
-        env:
-          TWINE_USERNAME: ${{ github.actor }}
-          TWINE_PASSWORD: ${{ secrets.GH_TOKEN }}
-          TWINE_REPOSITORY_URL: https://pypi.pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/
-        run: |
-          if [ -n "$(ls dist/*.whl 2>/dev/null)" ]; then
-            echo "Uploading integration wheels for ${{ matrix.arch }} to GitHub Packages..."
-            python -m twine upload --skip-existing --repository-url $TWINE_REPOSITORY_URL dist/*.whl || true
-            echo "Successfully uploaded integration wheels to GitHub Packages."
-          else
-            echo "No integration wheel files found in dist/ to upload to GitHub Packages."
-          fi
+      - name: Build wheels
+        uses: home-assistant/wheels@e5742a69d69f0e274e2689c998900c7d19652c21 # 2025.12.0
+        with:
+          abi: ${{ matrix.abi }}
+          tag: musllinux_1_2
+          arch: ${{ matrix.arch }}
+          wheels-key: ${{ secrets.PYPI_API_TOKEN }}
+          env-file: true
+          apk: "bluez-dev;libffi-dev;openssl-dev;glib-dev;eudev-dev;libxml2-dev;libxslt-dev;libpng-dev;libjpeg-turbo-dev;tiff-dev;gmp-dev;mpfr-dev;mpc1-dev;ffmpeg-dev;yaml-dev;openblas-dev;fftw-dev;lapack-dev;gfortran;blas-dev;eigen-dev;freetype-dev;glew-dev;harfbuzz-dev;hdf5-dev;libdc1394-dev;libtbb-dev;mesa-dev;openexr-dev;openjpeg-dev;uchardet-dev;nasm;zlib-ng-dev"
+          skip-binary: aiohttp;charset-normalizer;grpcio;multidict;SQLAlchemy;propcache;protobuf;pymicro-vad;yarl
+          constraints: "homeassistant/package_constraints.txt"
+          requirements-diff: "requirements_diff.txt"
+          requirements: "requirements_all_wheels_${{ matrix.arch }}.txt"
