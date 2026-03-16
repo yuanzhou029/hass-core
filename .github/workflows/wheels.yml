@@ -17,8 +17,8 @@ on:
       - "script/gen_requirements_all.py"
 
 permissions:
-  contents: read # 允许 checkout 代码
-  packages: write # 允许写入 GitHub Packages
+  contents: read
+  packages: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name}}
@@ -29,6 +29,87 @@ jobs:
     name: Initialize wheels builder
     if: github.repository_owner == 'yuanzhou029'
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        id: python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version-file: ".python-version"
+          check-latest: true
+
+      - name: Create Python virtual environment
+        run: |
+          python -m venv venv
+          . venv/bin/activate
+          python --version
+          pip install "$(grep '^uv' < requirements.txt)"
+          uv pip install -r requirements.txt
+
+      - name: Create requirements_diff file
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" =~ (schedule|workflow_dispatch) ]]; then
+            touch requirements_diff.txt
+          else
+            curl -s -o requirements_diff.txt https://raw.githubusercontent.com/yuanzhou029/hass-core/main/requirements.txt
+          fi
+
+      - name: Write env-file
+        run: |
+          (
+            echo "GRPC_PYTHON_BUILD_SYSTEM_OPENSSL=true"
+            echo "GRPC_PYTHON_BUILD_WITH_CYTHON=true"
+            echo "CARGO_NET_GIT_FETCH_WITH_CLI=true"
+            echo "CI_BUILD=1"
+            echo "ENABLE_HEADLESS=1"
+            echo "REQUIRE_SQLALCHEMY_CEXT=1"
+          ) > .env_file
+
+      - name: Upload env_file
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: env_file
+          path: ./.env_file
+          include-hidden-files: true
+          overwrite: true
+
+      - name: Upload requirements_diff
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: requirements_diff
+          path: ./requirements_diff.txt
+          overwrite: true
+
+      - name: Generate requirements
+        run: |
+          . venv/bin/activate
+          python -m script.gen_requirements_all ci
+
+      - name: Upload requirements_all_wheels
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: requirements_all_wheels
+          path: ./requirements_all_wheels_*.txt
+
+  core:
+    name: Build Core wheels ${{ matrix.abi }} for ${{ matrix.arch }} (musllinux_1_2)
+    if: github.repository_owner == 'yuanzhou029'
+    needs: init
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: ["cp314"]
+        arch: ["amd64", "aarch64"]
+        include:
+          - arch: amd64
+            os: ubuntu-latest
+          - arch: aarch64
+            os: ubuntu-24.04-arm
     steps:
       - name: Checkout the repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -52,7 +133,6 @@ jobs:
 
       - name: Adjust build env
         run: |
-          # Don't build wheels for uv as uv requires a greater version of rust as currently available on alpine
           sed -i "/uv/d" requirements.txt
           sed -i "/uv/d" requirements_diff.txt
 
@@ -65,39 +145,26 @@ jobs:
           ENABLE_HEADLESS: "1"
           REQUIRE_SQLALCHEMY_CEXT: "1"
         run: |
-          # 安装构建依赖，包括 twine
           python -m pip install --upgrade pip build "setuptools>=75.1.0" "wheel>=0.43.0" "twine>=5.0.0"
           
           echo "Building wheels for core dependencies..."
-          
-          # 创建临时目录用于构建，以及最终存放轮子的 dist 目录
-          mkdir -p wheel_tmp
           mkdir -p dist
-          
-          cd wheel_tmp
           
           PACKAGES_TO_BUILD="ciso8601 cryptography Pillow orjson PyTurboJPEG zeroconf"
           
           for package in $PACKAGES_TO_BUILD; do
-            PACKAGE_LINE=$(grep "^$package==" ../requirements.txt | head -n 1)
+            PACKAGE_LINE=$(grep "^$package==" requirements.txt | head -n 1)
             if [ -n "$PACKAGE_LINE" ]; then
               echo "Building wheel for $PACKAGE_LINE"
-              # 直接将轮子输出到 ../dist 目录
-              pip wheel --wheel-dir ../dist --no-deps "$PACKAGE_LINE" || echo "Failed to build $package, skipping..."
+              pip wheel --wheel-dir dist --no-deps "$PACKAGE_LINE" || echo "Failed to build $package, skipping..."
             else
               echo "Building wheel for $package (latest version)"
-              # 直接将轮子输出到 ../dist 目录
-              pip wheel --wheel-dir ../dist --no-deps "$package" || echo "Failed to build $package, skipping..."
+              pip wheel --wheel-dir dist --no-deps "$package" || echo "Failed to build $package, skipping..."
             fi
           done
           
-          cd .. # 返回到工作目录根目录
-          
-          # 清理临时构建目录
-          rm -rf wheel_tmp
-          
           echo "Core wheel building completed."
-          ls -la dist/ || echo "No wheels built" # 检查 dist 目录内容
+          ls -la dist/ || echo "No wheels built"
 
       - name: Upload Core wheels to GitHub Packages
         env:
@@ -156,9 +223,7 @@ jobs:
 
       - name: Adjust build env
         run: |
-          # Do not pin numpy in wheels building
           sed -i "/numpy/d" homeassistant/package_constraints.txt
-          # Don't build wheels for uv as uv requires a greater version of rust as currently available on alpine
           sed -i "/uv/d" requirements.txt
           sed -i "/uv/d" requirements_diff.txt
 
@@ -171,17 +236,11 @@ jobs:
           ENABLE_HEADLESS: "1"
           REQUIRE_SQLALCHEMY_CEXT: "1"
         run: |
-          # 安装构建依赖，包括 twine
           python -m pip install --upgrade pip build "setuptools>=75.1.0" "wheel>=0.43.0" "twine>=5.0.0"
           
           echo "Building wheels for integration dependencies..."
-          
-          # 创建临时目录用于构建，以及最终存放轮子的 dist 目录
-          mkdir -p wheel_tmp
           mkdir -p dist
           
-          # 根据 requirements_all_wheels 文件构建轮子包
-          # 首先确定当前架构对应的文件
           if [ "${{ matrix.arch }}" = "amd64" ]; then
             REQ_FILE="requirements_all_wheels_amd64.txt"
           else
@@ -190,43 +249,25 @@ jobs:
           
           if [ -f "$REQ_FILE" ]; then
             echo "Using requirements file: $REQ_FILE"
-            # 读取需求文件并构建轮子
             while IFS= read -r line; do
-              # 跳过空行和注释
               [[ "$line" =~ ^[[:space:]]*# ]] && continue
               [[ -z "$line" ]] && continue
-              
-              # 检查是否是包声明行
               if [[ "$line" =~ ^[a-zA-Z] ]]; then
                 echo "Building wheel for: $line"
-                # 直接将轮子输出到 ../dist 目录 (因为我们会 cd wheel_tmp)
-                pip wheel --wheel-dir ./dist --no-deps "$line" || echo "Failed to build $line, skipping..."
+                pip wheel --wheel-dir dist --no-deps "$line" || echo "Failed to build $line, skipping..."
               fi
             done < "$REQ_FILE"
           else
             echo "Requirements file $REQ_FILE not found, building common integration packages"
-            # 构建一些常见的集成依赖包
             PACKAGES_TO_BUILD="pybluez ffmpeg-python pytz requests-oauthlib"
             for package in $PACKAGES_TO_BUILD; do
               echo "Building wheel for $package"
-              # 直接将轮子输出到 ../dist 目录 (因为我们会 cd wheel_tmp)
-              pip wheel --wheel-dir ./dist --no-deps "$package" || echo "Failed to build $package, skipping..."
+              pip wheel --wheel-dir dist --no-deps "$package" || echo "Failed to build $package, skipping..."
             done
           fi
           
-          # 注意：这里 pip wheel --wheel-dir ./dist 会在当前目录 (wheel_tmp) 下创建 dist。
-          # 需要将这些轮子移动到根目录的 dist 文件夹。
-          if [ -d "dist" ]; then
-              mv dist/*.whl ../dist/ || true
-          fi
-          
-          cd .. # 返回到工作目录根目录
-          
-          # 清理临时构建目录
-          rm -rf wheel_tmp
-          
           echo "Integration wheel building completed."
-          ls -la dist/ || echo "No wheels built" # 检查 dist 目录内容
+          ls -la dist/ || echo "No wheels built"
 
       - name: Upload Integration wheels to GitHub Packages
         env:
