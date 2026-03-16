@@ -166,10 +166,11 @@ jobs:
         run: |
           if [ -n "$(ls dist/*.whl 2>/dev/null)" ]; then
             echo "Uploading core wheels for ${{ matrix.arch }} to PyPI..."
-            python -m twine upload --skip-existing dist/*.whl || true
+            python -m twine upload --skip-existing dist/*.whl
             echo "Successfully uploaded core wheels to PyPI."
           else
             echo "No core wheel files found in dist/ to upload to PyPI."
+            exit 1
           fi
 
   integrations:
@@ -263,8 +264,9 @@ jobs:
         run: |
           if [ -n "$(ls dist/*.whl 2>/dev/null)" ]; then
             echo "Uploading integration wheels for ${{ matrix.arch }} to PyPI..."
-            python -m twine upload --skip-existing dist/*.whl || true
+            python -m twine upload --skip-existing dist/*.whl
             echo "Successfully uploaded integration wheels to PyPI."
           else
             echo "No integration wheel files found in dist/ to upload to PyPI."
+            exit 1
           fi
