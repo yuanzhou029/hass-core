@@ -26,7 +26,7 @@ concurrency:
 jobs:
   init:
     name: Initialize build
-    if: github.repository_owner == 'home-assistant'
+    if: github.repository_owner == 'yuanzhou029'
     runs-on: ubuntu-latest
     permissions:
       contents: read # To check out the repository
@@ -87,7 +87,7 @@ jobs:
 
   build_base:
     name: Build ${{ matrix.arch }} base core image
-    if: github.repository_owner == 'home-assistant'
+    if: github.repository_owner == 'yuanzhou029'
     needs: init
     runs-on: ${{ matrix.os }}
     permissions:
@@ -113,7 +113,7 @@ jobs:
         if: needs.init.outputs.channel == 'dev'
         uses: dawidd6/action-download-artifact@2536c51d3d126276eb39f74d6bc9c72ac6ef30d3 # v16
         with:
-          github_token: ${{secrets.GITHUB_TOKEN}}
+          github_token: ${{secrets.GH_TOKEN}}
           repo: home-assistant/frontend
           branch: dev
           workflow: nightly.yaml
@@ -124,7 +124,7 @@ jobs:
         if: needs.init.outputs.channel == 'dev'
         uses: dawidd6/action-download-artifact@2536c51d3d126276eb39f74d6bc9c72ac6ef30d3 # v16
         with:
-          github_token: ${{secrets.GITHUB_TOKEN}}
+          github_token: ${{secrets.GH_TOKEN}}
           repo: OHF-Voice/intents-package
           branch: main
           workflow: nightly.yaml
@@ -200,223 +200,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
-        with:
-          cosign-release: "v2.5.3"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-
-      - name: Build variables
-        id: vars
-        shell: bash
-        env:
-          ARCH: ${{ matrix.arch }}
-        run: |
-          echo "base_image=ghcr.io/home-assistant/${ARCH}-homeassistant-base:${BASE_IMAGE_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "cache_image=ghcr.io/home-assistant/${ARCH}-homeassistant:latest" >> "$GITHUB_OUTPUT"
-          echo "created=$(date --rfc-3339=seconds --utc)" >> "$GITHUB_OUTPUT"
-
-      - name: Verify base image signature
-        env:
-          BASE_IMAGE: ${{ steps.vars.outputs.base_image }}
-        run: |
-          cosign verify \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            --certificate-identity-regexp "https://github.com/home-assistant/docker/.*" \
-            "${BASE_IMAGE}"
-
-      - name: Verify cache image signature
-        id: cache
-        continue-on-error: true
-        env:
-          CACHE_IMAGE: ${{ steps.vars.outputs.cache_image }}
-        run: |
-          cosign verify \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            --certificate-identity-regexp "https://github.com/home-assistant/core/.*" \
-            "${CACHE_IMAGE}"
-
-      - name: Build base image
-        id: build
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: ${{ steps.vars.outputs.platform }}
-          push: true
-          cache-from: ${{ steps.cache.outcome == 'success' && steps.vars.outputs.cache_image || '' }}
-          build-args: |
-            BUILD_FROM=${{ steps.vars.outputs.base_image }}
-          tags: ghcr.io/home-assistant/${{ matrix.arch }}-homeassistant:${{ needs.init.outputs.version }}
-          outputs: type=image,push=true,compression=zstd,compression-level=9,force-compression=true,oci-mediatypes=true
-          labels: |
-            io.hass.arch=${{ matrix.arch }}
-            io.hass.version=${{ needs.init.outputs.version }}
-            org.opencontainers.image.created=${{ steps.vars.outputs.created }}
-            org.opencontainers.image.version=${{ needs.init.outputs.version }}
-
-      - name: Sign image
-        env:
-          ARCH: ${{ matrix.arch }}
-          VERSION: ${{ needs.init.outputs.version }}
-          DIGEST: ${{ steps.build.outputs.digest }}
-        run: |
-          cosign sign --yes "ghcr.io/home-assistant/${ARCH}-homeassistant:${VERSION}@${DIGEST}"
-
-  build_machine:
-    name: Build ${{ matrix.machine }} machine core image
-    if: github.repository_owner == 'home-assistant'
-    needs: ["init", "build_base"]
-    runs-on: ${{ matrix.runs-on }}
-    permissions:
-      contents: read # To check out the repository
-      packages: write # To push to GHCR
-      id-token: write # For cosign signing
-    strategy:
-      matrix:
-        machine:
-          - generic-x86-64
-          - intel-nuc
-          - khadas-vim3
-          - odroid-c2
-          - odroid-c4
-          - odroid-m1
-          - odroid-n2
-          - qemuarm-64
-          - qemux86-64
-          - raspberrypi3-64
-          - raspberrypi4-64
-          - raspberrypi5-64
-          - yellow
-          - green
-        include:
-          # Default: aarch64 on native ARM runner
-          - arch: aarch64
-            runs-on: ubuntu-24.04-arm
-          # Overrides for amd64 machines
-          - machine: generic-x86-64
-            arch: amd64
-            runs-on: ubuntu-24.04
-          - machine: qemux86-64
-            arch: amd64
-            runs-on: ubuntu-24.04
-          # TODO: remove, intel-nuc is a legacy name for x86-64, renamed in 2021
-          - machine: intel-nuc
-            arch: amd64
-            runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout the repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Set build additional args
-        env:
-          VERSION: ${{ needs.init.outputs.version }}
-        run: |
-          # Create general tags
-          if [[ "${VERSION}" =~ d ]]; then
-            echo "BUILD_ARGS=--additional-tag dev" >> $GITHUB_ENV
-          elif [[ "${VERSION}" =~ b ]]; then
-            echo "BUILD_ARGS=--additional-tag beta" >> $GITHUB_ENV
-          else
-            echo "BUILD_ARGS=--additional-tag stable" >> $GITHUB_ENV
-          fi
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build base image
-        uses: home-assistant/builder@6cb4fd3d1338b6e22d0958a4bcb53e0965ea63b4 # 2026.02.1
-        with:
-          image: ${{ matrix.arch }}
-          args: |
-            $BUILD_ARGS \
-            --target /data/machine \
-            --cosign \
-            --machine "${{ needs.init.outputs.version }}=${{ matrix.machine }}"
-
-  publish_ha:
-    name: Publish version files
-    environment: ${{ needs.init.outputs.channel }}
-    if: github.repository_owner == 'home-assistant'
-    needs: ["init", "build_machine"]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout the repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Initialize git
-        uses: home-assistant/actions/helpers/git-init@master # zizmor: ignore[unpinned-uses]
-        with:
-          name: ${{ secrets.GIT_NAME }}
-          email: ${{ secrets.GIT_EMAIL }}
-          token: ${{ secrets.GIT_TOKEN }}
-
-      - name: Update version file
-        uses: home-assistant/actions/helpers/version-push@master # zizmor: ignore[unpinned-uses]
-        with:
-          key: "homeassistant[]"
-          key-description: "Home Assistant Core"
-          version: ${{ needs.init.outputs.version }}
-          channel: ${{ needs.init.outputs.channel }}
-          exclude-list: '["odroid-xu","qemuarm","qemux86","raspberrypi","raspberrypi2","raspberrypi3","raspberrypi4","tinker"]'
-
-      - name: Update version file (stable -> beta)
-        if: needs.init.outputs.channel == 'stable'
-        uses: home-assistant/actions/helpers/version-push@master # zizmor: ignore[unpinned-uses]
-        with:
-          key: "homeassistant[]"
-          key-description: "Home Assistant Core"
-          version: ${{ needs.init.outputs.version }}
-          channel: beta
-          exclude-list: '["odroid-xu","qemuarm","qemux86","raspberrypi","raspberrypi2","raspberrypi3","raspberrypi4","tinker"]'
-
-  publish_container:
-    name: Publish meta container for ${{ matrix.registry }}
-    environment: ${{ needs.init.outputs.channel }}
-    if: github.repository_owner == 'home-assistant'
-    needs: ["init", "build_base"]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read # To check out the repository
-      packages: write # To push to GHCR
-      id-token: write # For cosign signing
-    strategy:
-      fail-fast: false
-      matrix:
-        registry: ["ghcr.io/home-assistant", "docker.io/homeassistant"]
-    steps:
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
-        with:
-          cosign-release: "v2.5.3"
-
-      - name: Login to DockerHub
-        if: matrix.registry == 'docker.io/homeassistant'
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.GH_TOKEN }}
 
       - name: Verify architecture image signatures
         shell: bash
@@ -426,11 +210,11 @@ jobs:
         run: |
           ARCHS=$(echo "${ARCHITECTURES}" | jq -r '.[]')
           for arch in $ARCHS; do
-            echo "Verifying ${arch} image signature..."
-            cosign verify \
-              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-              --certificate-identity-regexp https://github.com/home-assistant/core/.* \
-              "ghcr.io/home-assistant/${arch}-homeassistant:${VERSION}"
+          echo "Verifying ${arch} image signature..."
+          cosign verify \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp https://github.com/yuanzhou029/core/.* \
+            "ghcr.io/yuanzhou029/${arch}-homeassistant:${VERSION}"
           done
           echo "✓ All images verified successfully"
 
@@ -444,7 +228,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
-          images: ${{ matrix.registry }}/home-assistant
+          images: ${{ matrix.registry }}/hass-core
           sep-tags: ","
           tags: |
             type=raw,value=${{ needs.init.outputs.version }},priority=9999
@@ -472,8 +256,8 @@ jobs:
             echo "Copying ${arch} image to DockerHub..."
             for attempt in 1 2 3; do
               if docker buildx imagetools create \
-                --tag "docker.io/homeassistant/${arch}-homeassistant:${VERSION}" \
-                "ghcr.io/home-assistant/${arch}-homeassistant:${VERSION}"; then
+                --tag "docker.io/yuanzhou029/${arch}-homeassistant:${VERSION}" \
+                "ghcr.io/yuanzhou029/${arch}-homeassistant:${VERSION}"; then
                 break
               fi
               echo "Attempt ${attempt} failed, retrying in 10 seconds..."
@@ -483,7 +267,7 @@ jobs:
                 exit 1
               fi
             done
-            cosign sign --yes "docker.io/homeassistant/${arch}-homeassistant:${VERSION}"
+            cosign sign --yes "docker.io/yuanzhou029/${arch}-homeassistant:${VERSION}"
           done
 
       - name: Create and push multi-arch manifests
@@ -530,7 +314,7 @@ jobs:
     permissions:
       contents: read # To check out the repository
       id-token: write # For PyPI trusted publishing
-    if: github.repository_owner == 'home-assistant' && needs.init.outputs.publish == 'true'
+    if: github.repository_owner == 'yuanzhou029' && needs.init.outputs.publish == 'true'
     steps:
       - name: Checkout the repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -574,10 +358,10 @@ jobs:
       attestations: write # For build provenance attestation
       id-token: write # For build provenance attestation
     needs: ["init"]
-    if: github.repository_owner == 'home-assistant'
+    if: github.repository_owner == 'yuanzhou029'
     env:
-      HASSFEST_IMAGE_NAME: ghcr.io/home-assistant/hassfest
-      HASSFEST_IMAGE_TAG: ghcr.io/home-assistant/hassfest:${{ needs.init.outputs.version }}
+      HASSFEST_IMAGE_NAME: ghcr.io/yuanzhou029/hassfest
+      HASSFEST_IMAGE_TAG: ghcr.io/yuanzhou029/hassfest:${{ needs.init.outputs.version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -589,7 +373,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.GH_TOKEN }}
 
       - name: Build Docker image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
