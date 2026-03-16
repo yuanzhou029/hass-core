@@ -243,7 +243,7 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
         run: |
-          echo "base_image=ghcr.io/yuanzhou029/${ARCH}-homeassistant-base:${BASE_IMAGE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "base_image=ghcr.io/home-assistant/${ARCH}-homeassistant-base:${BASE_IMAGE_VERSION}" >> "$GITHUB_OUTPUT"
           echo "cache_image=ghcr.io/yuanzhou029/${ARCH}-homeassistant:latest" >> "$GITHUB_OUTPUT"
           echo "created=$(date --rfc-3339=seconds --utc)" >> "$GITHUB_OUTPUT"
           echo "platform=linux/${ARCH}" >> "$GITHUB_OUTPUT"
@@ -256,7 +256,7 @@ jobs:
           if command -v cosign &> /dev/null; then
             cosign verify \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-              --certificate-identity-regexp "https://github.com/yuanzhou029/docker/.*" \
+              --certificate-identity-regexp "https://github.com/home-assistant/docker/.*" \
               "${BASE_IMAGE}" || echo "Base image verification failed or skipped"
           else
             echo "cosign not available, skipping base image verification"
