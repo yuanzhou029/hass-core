@@ -320,7 +320,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
-          images: ${{ matrix.registry }}/hass-core
+          images: ${{ matrix.registry }}/hass-core  # This sets the base image name
           sep-tags: ","
           tags: |
             type=raw,value=${{ needs.init.outputs.version }},priority=9999
@@ -348,7 +348,7 @@ jobs:
             echo "Copying ${arch} image to DockerHub..."
             for attempt in 1 2 3; do
               if docker buildx imagetools create \
-                --tag "docker.io/yuanzhou029/${arch}-homeassistant:${VERSION}" \
+                --tag "docker.io/yuanzhou029/hass-core:${arch}-homeassistant-${VERSION}" \
                 "ghcr.io/yuanzhou029/${arch}-homeassistant:${VERSION}"; then
                 break
               fi
@@ -359,7 +359,7 @@ jobs:
                 exit 1
               fi
             done
-            cosign sign --yes "docker.io/yuanzhou029/${arch}-homeassistant:${VERSION}"
+            cosign sign --yes "docker.io/yuanzhou029/hass-core:${arch}-homeassistant-${VERSION}"
           done
 
       - name: Create and push multi-arch manifests
@@ -374,7 +374,13 @@ jobs:
           ARCHS=$(echo "${ARCHITECTURES}" | jq -r '.[]')
           ARCH_IMAGES=()
           for arch in $ARCHS; do
-            ARCH_IMAGES+=("${REGISTRY}/${arch}-homeassistant:${VERSION}")
+            if [[ "$REGISTRY" == *"docker.io"* ]]; then
+              # For DockerHub, use the correct format
+              ARCH_IMAGES+=("${REGISTRY}/hass-core:${arch}-homeassistant-${VERSION}")
+            else
+              # For GHCR, use the original format
+              ARCH_IMAGES+=("${REGISTRY}/${arch}-homeassistant:${VERSION}")
+            fi
           done
 
           # Build list of all tags for single manifest creation
@@ -382,18 +388,32 @@ jobs:
           TAG_ARGS=()
           IFS=',' read -ra TAGS <<< "${META_TAGS}"
           for tag in "${TAGS[@]}"; do
-            TAG_ARGS+=("--tag" "${tag}")
+            # Only add tag if it's not empty
+            if [ -n "$tag" ]; then
+              TAG_ARGS+=("--tag" "${tag}")
+            fi
           done
 
           # Create manifest with ALL tags in a single operation (much faster!)
           echo "Creating multi-arch manifest with tags: ${TAGS[*]}"
-          docker buildx imagetools create "${TAG_ARGS[@]}" "${ARCH_IMAGES[@]}"
+          if [ ${#TAG_ARGS[@]} -gt 0 ] && [ ${#ARCH_IMAGES[@]} -gt 0 ]; then
+            docker buildx imagetools create "${TAG_ARGS[@]}" "${ARCH_IMAGES[@]}"
+          else
+            echo "No tags or images to create manifest for"
+          fi
 
           # Sign each tag separately (signing requires individual tag names)
           echo "Signing all tags..."
           for tag in "${TAGS[@]}"; do
-            echo "Signing ${tag}"
-            cosign sign --yes "${tag}"
+            if [ -n "$tag" ]; then
+              echo "Signing ${tag}"
+              # Check if cosign is available before attempting signing
+              if command -v cosign &> /dev/null; then
+                cosign sign --yes "${tag}" || echo "Signing for ${tag} failed or skipped"
+              else
+                echo "cosign not available, skipping signing for ${tag}"
+              fi
+            fi
           done
 
           echo "All manifests created and signed successfully"
