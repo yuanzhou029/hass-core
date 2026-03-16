@@ -163,7 +163,21 @@ jobs:
           python3 -m pip install "$(grep '^uv' < requirements.txt)"
           uv pip install packaging tomli
           uv pip install .
-          python3 script/version_bump.py nightly --set-nightly-version "${VERSION}"
+
+          # Only run version bump if the target version is different from current
+          CURRENT_VERSION=$(python -c "from homeassistant import const; print(const.__version__)")
+          echo "Current version: $CURRENT_VERSION"
+          echo "Target version: ${VERSION}"
+          
+          if [ "$CURRENT_VERSION" != "${VERSION}" ]; then
+            # Try to generate a new nightly version using current timestamp format
+            TIMESTAMP_VERSION="2026.4.0.dev$(date +%Y%m%d%H%M)"
+            echo "Attempting to bump to: $TIMESTAMP_VERSION"
+            
+            python3 script/version_bump.py nightly --set-nightly-version "$TIMESTAMP_VERSION" || echo "Version bump failed, continuing build"
+          else
+            echo "Versions are equal, skipping version bump"
+          fi
 
           # Check if frontend wheel exists before adjusting
           if ls home_assistant_frontend*.whl >/dev/null 2>&1; then
