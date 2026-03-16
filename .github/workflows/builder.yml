@@ -13,7 +13,7 @@ env:
   PIP_TIMEOUT: 60
   UV_HTTP_TIMEOUT: 60
   UV_SYSTEM_PYTHON: "true"
-  # Base image version from https://github.com/home-assistant/docker
+  # Base image version from your custom docker repository
   BASE_IMAGE_VERSION: "2026.01.0"
   ARCHITECTURES: '["amd64", "aarch64"]'
 
@@ -48,16 +48,16 @@ jobs:
 
       - name: Get information
         id: info
-        uses: home-assistant/actions/helpers/info@master # zizmor: ignore[unpinned-uses]
+        uses: yuanzhou029/actions/helpers/info@main # zizmor: ignore[unpinned-uses]  # Updated to your repo
 
       - name: Get version
         id: version
-        uses: home-assistant/actions/helpers/version@master # zizmor: ignore[unpinned-uses]
+        uses: yuanzhou029/actions/helpers/version@main # zizmor: ignore[unpinned-uses]  # Updated to your repo
         with:
           type: ${{ env.BUILD_TYPE }}
 
       - name: Verify version
-        uses: home-assistant/actions/helpers/verify-version@master # zizmor: ignore[unpinned-uses]
+        uses: yuanzhou029/actions/helpers/verify-version@main # zizmor: ignore[unpinned-uses]  # Updated to your repo
         with:
           ignore-dev: true
 
@@ -114,7 +114,7 @@ jobs:
         uses: dawidd6/action-download-artifact@2536c51d3d126276eb39f74d6bc9c72ac6ef30d3 # v16
         with:
           github_token: ${{secrets.GH_TOKEN}}
-          repo: home-assistant/frontend
+          repo: yuanzhou029/hass-frontend  # Updated to your repo
           branch: dev
           workflow: nightly.yaml
           workflow_conclusion: success
@@ -125,7 +125,7 @@ jobs:
         uses: dawidd6/action-download-artifact@2536c51d3d126276eb39f74d6bc9c72ac6ef30d3 # v16
         with:
           github_token: ${{secrets.GH_TOKEN}}
-          repo: OHF-Voice/intents-package
+          repo: yuanzhou029/hass-intents  # Updated to your repo
           branch: main
           workflow: nightly.yaml
           workflow_conclusion: success
@@ -149,35 +149,41 @@ jobs:
           uv pip install .
           python3 script/version_bump.py nightly --set-nightly-version "${VERSION}"
 
-          if [[ "$(ls home_assistant_frontend*.whl)" =~ ^home_assistant_frontend-(.*)-py3-none-any.whl$ ]]; then
-            echo "Found frontend wheel, setting version to: ${BASH_REMATCH[1]}"
-            frontend_version="${BASH_REMATCH[1]}" yq \
-              --inplace e -o json \
-              '.requirements = ["home-assistant-frontend=="+env(frontend_version)]' \
-              homeassistant/components/frontend/manifest.json
+          # Adjust for your custom frontend package if available
+          if ls hass_frontend*.whl >/dev/null 2>&1; then
+            if [[ "$(ls hass_frontend*.whl)" =~ ^hass_frontend-(.*)-py3-none-any.whl$ ]]; then
+              echo "Found custom frontend wheel, setting version to: ${BASH_REMATCH[1]}"
+              frontend_version="${BASH_REMATCH[1]}" yq \
+                --inplace e -o json \
+                '.requirements = ["hass-frontend=="+env(frontend_version)]' \
+                homeassistant/components/frontend/manifest.json
 
-            sed -i "s|home-assistant-frontend==.*|home-assistant-frontend==${BASH_REMATCH[1]}|" \
-              homeassistant/package_constraints.txt
+              sed -i "s|hass-frontend==.*|hass-frontend==${BASH_REMATCH[1]}|" \
+                homeassistant/package_constraints.txt
 
-            sed -i "s|home-assistant-frontend==.*||" requirements_all.txt
+              sed -i "s|hass-frontend==.*||" requirements_all.txt
+            fi
           fi
 
-          if [[ "$(ls home_assistant_intents*.whl)" =~ ^home_assistant_intents-(.*)-py3-none-any.whl$ ]]; then
-            echo "Found intents wheel, setting version to: ${BASH_REMATCH[1]}"
-            yq \
-              --inplace e -o json \
-              'del(.requirements[] | select(contains("home-assistant-intents")))' \
-              homeassistant/components/conversation/manifest.json
+          # Adjust for your custom intents package if available
+          if ls hass_intents*.whl >/dev/null 2>&1; then
+            if [[ "$(ls hass_intents*.whl)" =~ ^hass_intents-(.*)-py3-none-any.whl$ ]]; then
+              echo "Found custom intents wheel, setting version to: ${BASH_REMATCH[1]}"
+              yq \
+                --inplace e -o json \
+                'del(.requirements[] | select(contains("hass-intents")))' \
+                homeassistant/components/conversation/manifest.json
 
-            intents_version="${BASH_REMATCH[1]}" yq \
-              --inplace e -o json \
-              '.requirements += ["home-assistant-intents=="+env(intents_version)]' \
-              homeassistant/components/conversation/manifest.json
+              intents_version="${BASH_REMATCH[1]}" yq \
+                --inplace e -o json \
+                '.requirements += ["hass-intents=="+env(intents_version)]' \
+                homeassistant/components/conversation/manifest.json
 
-            sed -i "s|home-assistant-intents==.*|home-assistant-intents==${BASH_REMATCH[1]}|" \
-              homeassistant/package_constraints.txt
+              sed -i "s|hass-intents==.*|hass-intents==${BASH_REMATCH[1]}|" \
+                homeassistant/package_constraints.txt
 
-            sed -i "s|home-assistant-intents==.*||" requirements_all.txt requirements.txt
+              sed -i "s|hass-intents==.*||" requirements_all.txt requirements.txt
+            fi
           fi
 
       - name: Download translations
@@ -243,7 +249,7 @@ jobs:
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.7.1
 
       - name: Copy architecture images to DockerHub
-        if: matrix.registry == 'docker.io/homeassistant'
+        if: matrix.registry == 'docker.io/yuanzhou029'
         shell: bash
         env:
           ARCHITECTURES: ${{ needs.init.outputs.architectures }}
