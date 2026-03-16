@@ -148,7 +148,7 @@ jobs:
           REQUIRE_SQLALCHEMY_CEXT: "1"
         run: |
           # 安装构建依赖，包括 twine
-          python -m pip install --upgrade pip build setuptools wheel twine
+          python -m pip install --upgrade pip build "setuptools>=75.1.0" wheel twine
           
           echo "Building wheels for core dependencies..."
           
@@ -249,7 +249,7 @@ jobs:
           REQUIRE_SQLALCHEMY_CEXT: "1"
         run: |
           # 安装构建依赖，包括 twine
-          python -m pip install --upgrade pip build setuptools wheel twine
+          python -m pip install --upgrade pip build "setuptools>=75.1.0" wheel twine
           
           echo "Building wheels for integration dependencies..."
           
