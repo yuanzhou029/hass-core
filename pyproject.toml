@@ -1,12 +1,11 @@
 [build-system]
-requires = ["setuptools>=75.1.0"]
+requires = ["setuptools>=75.1.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "homeassistant"
 version = "2026.4.0.dev0"
-license = "Apache-2.0"
-license-files = ["LICENSE*", "homeassistant/backports/LICENSE*"]
+license = {text = "Apache-2.0"}
 description = "Open-source home automation platform running on Python 3."
 readme = "README.rst"
 authors = [
