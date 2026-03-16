@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "homeassistant"
 version = "2026.4.0.dev0"
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 description = "Open-source home automation platform running on Python 3."
 readme = "README.rst"
 authors = [

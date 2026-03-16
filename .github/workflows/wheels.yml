@@ -129,6 +129,8 @@ jobs:
         run: |
           sed -i "/uv/d" requirements.txt
           sed -i "/uv/d" requirements_diff.txt
+          rm -rf build/ dist/ *.egg-info homeassistant.egg-info/
+          find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
       - name: Build Core wheels
         env:
@@ -211,6 +213,8 @@ jobs:
           sed -i "/numpy/d" homeassistant/package_constraints.txt
           sed -i "/uv/d" requirements.txt
           sed -i "/uv/d" requirements_diff.txt
+          rm -rf build/ dist/ *.egg-info homeassistant.egg-info/
+          find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
       - name: Build Integration wheels
         env:
