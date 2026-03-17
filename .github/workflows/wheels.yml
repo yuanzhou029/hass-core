@@ -304,7 +304,11 @@ jobs:
 
   publish-complete-package:
     name: Publish complete Home Assistant package to GitHub Releases
+<<<<<<< HEAD
     if: github.repository_owner == 'yuanzhou029' && (github.event_name == 'release' || github.event_name == 'workflow_dispatch')
+=======
+    if: github.repository_owner == 'yuanzhou029'
+>>>>>>> 270c967367539b588aa7c11fcf1ad40bfc9fee25
     needs: [build-complete-package]
     runs-on: ubuntu-latest
     permissions:
