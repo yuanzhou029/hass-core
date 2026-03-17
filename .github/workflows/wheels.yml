@@ -14,6 +14,13 @@ on:
       - "requirements_all.txt"
       - "requirements.txt"
       - "script/gen_requirements_all.py"
+    tags:
+      - 'v*'
+  release:
+    types: [published]
+  pull_request:
+    branches:
+      - main
 
 permissions: {}
 
@@ -297,7 +304,7 @@ jobs:
 
   publish-complete-package:
     name: Publish complete Home Assistant package to GitHub Releases
-    if: github.repository_owner == 'yuanzhou029' && github.event_name == 'release'
+    if: github.repository_owner == 'yuanzhou029' && (github.event_name == 'release' || github.event_name == 'workflow_dispatch')
     needs: [build-complete-package]
     runs-on: ubuntu-latest
     permissions:
@@ -318,7 +325,7 @@ jobs:
           zip -r ../homeassistant-complete-package.zip ./
           cd ..
 
-      - name: Get current version
+      - name: Get tag and version
         id: version
         run: |
           # Extract version from the built homeassistant wheel if available
@@ -328,26 +335,22 @@ jobs:
             echo "version=$VERSION" >> $GITHUB_OUTPUT
             echo "Found Home Assistant version: $VERSION"
           else
-            # Fallback to a tag-based version if running from a tagged release
+            # Use tag name if available, fallback to timestamp
             if [ -n "${{ github.event.release.tag_name }}" ]; then
               VERSION="${{ github.event.release.tag_name }}"
-              # Remove 'v' prefix if present
               VERSION=${VERSION#v}
-              echo "version=$VERSION" >> $GITHUB_OUTPUT
-              echo "Using tag-based version: $VERSION"
             else
-              # Fallback to a timestamp-based version
-              TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-              echo "version=build_$TIMESTAMP" >> $GITHUB_OUTPUT
-              echo "Using timestamp-based version: $TIMESTAMP"
+              VERSION="build-$(date +%Y%m%d-%H%M%S)"
             fi
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "Using version: $VERSION"
           fi
 
-      - name: Create Release and Upload Complete Package
+      - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: "Home Assistant Complete Package v${{ steps.version.outputs.version }}"
-          tag_name: ${{ github.event.release.tag_name }}
+          tag_name: ${{ github.event.release.tag_name || format('v{0}', steps.version.outputs.version) }}
           body: |
             Complete Home Assistant installation package with precompiled dependencies.
             
