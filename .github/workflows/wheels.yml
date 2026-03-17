@@ -1,5 +1,6 @@
-name: Build Core Wheels with Custom Wheels Tool
+name: Build wheels
 
+# yamllint disable-line rule:truthy
 on:
   workflow_dispatch:
   schedule:
@@ -14,13 +15,6 @@ on:
       - "requirements_all.txt"
       - "requirements.txt"
       - "script/gen_requirements_all.py"
-    tags:
-      - 'v*'
-  release:
-    types: [published]
-  pull_request:
-    branches:
-      - main
 
 permissions: {}
 
@@ -31,17 +25,17 @@ concurrency:
 jobs:
   init:
     name: Initialize wheels builder
-    if: github.repository_owner == 'yuanzhou029'
+    if: github.repository_owner == 'home-assistant'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout the repository
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
       - name: Set up Python
         id: python
-        uses: actions/setup-python@v6.2.0
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version-file: ".python-version"
           check-latest: true
@@ -51,8 +45,8 @@ jobs:
           python -m venv venv
           . venv/bin/activate
           python --version
-          pip install "$(grep '^uv' < requirements.txt)" || true
-          pip install -r requirements.txt
+          pip install "$(grep '^uv' < requirements.txt)"
+          uv pip install -r requirements.txt
 
       - name: Create requirements_diff file
         run: |
@@ -80,7 +74,7 @@ jobs:
           ) > .env_file
 
       - name: Upload env_file
-        uses: actions/upload-artifact@v7.0.0
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: env_file
           path: ./.env_file
@@ -88,7 +82,7 @@ jobs:
           overwrite: true
 
       - name: Upload requirements_diff
-        uses: actions/upload-artifact@v7.0.0
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: requirements_diff
           path: ./requirements_diff.txt
@@ -100,14 +94,14 @@ jobs:
           python -m script.gen_requirements_all ci
 
       - name: Upload requirements_all_wheels
-        uses: actions/upload-artifact@v7.0.0
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: requirements_all_wheels
           path: ./requirements_all_wheels_*.txt
 
   core:
     name: Build Core wheels ${{ matrix.abi }} for ${{ matrix.arch }} (musllinux_1_2)
-    if: github.repository_owner == 'yuanzhou029'
+    if: github.repository_owner == 'home-assistant'
     needs: init
     runs-on: ${{ matrix.os }}
     strategy:
@@ -122,17 +116,17 @@ jobs:
             os: ubuntu-24.04-arm
     steps:
       - name: Checkout the repository
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
       - name: Download env_file
-        uses: actions/download-artifact@v8.0.0
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: env_file
 
       - name: Download requirements_diff
-        uses: actions/download-artifact@v8.0.0
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: requirements_diff
 
@@ -143,16 +137,12 @@ jobs:
           sed -i "/uv/d" requirements_diff.txt
 
       - name: Build wheels
-        uses: yuanzhou029/hass-wheels@main  # 您创建的wheels工具
+        uses: home-assistant/wheels@e5742a69d69f0e274e2689c998900c7d19652c21 # 2025.12.0
         with:
           abi: ${{ matrix.abi }}
           tag: musllinux_1_2
           arch: ${{ matrix.arch }}
-          # 上传到本地路径而非服务器
-          local-wheels-repo-path: "/tmp/wheels_output"
-          wheels-host: ""
-          wheels-user: ""
-          # 保持原有配置
+          wheels-key: ${{ secrets.WHEELS_KEY }} # zizmor: ignore[secrets-outside-env]
           env-file: true
           apk: "libffi-dev;openssl-dev;yaml-dev;nasm;zlib-ng-dev"
           skip-binary: aiohttp;multidict;propcache;yarl;SQLAlchemy
@@ -160,16 +150,9 @@ jobs:
           requirements-diff: "requirements_diff.txt"
           requirements: "requirements.txt"
 
-      - name: Upload wheels as artifacts
-        uses: actions/upload-artifact@v4.3.6
-        with:
-          name: core-wheels-${{ matrix.arch }}-${{ matrix.abi }}
-          path: /tmp/wheels_output/**
-          retention-days: 30
-
   integrations:
     name: Build wheels ${{ matrix.abi }} for ${{ matrix.arch }}
-    if: github.repository_owner == 'yuanzhou029'  # 更改为您自己的用户名
+    if: github.repository_owner == 'home-assistant'
     needs: init
     runs-on: ${{ matrix.os }}
     strategy:
@@ -184,22 +167,22 @@ jobs:
             os: ubuntu-24.04-arm
     steps:
       - name: Checkout the repository
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
       - name: Download env_file
-        uses: actions/download-artifact@v8.0.0
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: env_file
 
       - name: Download requirements_diff
-        uses: actions/download-artifact@v8.0.0
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: requirements_diff
 
       - name: Download requirements_all_wheels
-        uses: actions/download-artifact@v8.0.0
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: requirements_all_wheels
 
@@ -212,169 +195,15 @@ jobs:
           sed -i "/uv/d" requirements_diff.txt
 
       - name: Build wheels
-        uses: yuanzhou029/hass-wheels@main  # 您创建的wheels工具
+        uses: home-assistant/wheels@e5742a69d69f0e274e2689c998900c7d19652c21 # 2025.12.0
         with:
           abi: ${{ matrix.abi }}
           tag: musllinux_1_2
           arch: ${{ matrix.arch }}
-          # 上传到本地路径而非服务器
-          local-wheels-repo-path: "/tmp/wheels_output"
-          wheels-host: ""
-          wheels-user: ""
-          # 保持原有配置
+          wheels-key: ${{ secrets.WHEELS_KEY }} # zizmor: ignore[secrets-outside-env]
           env-file: true
           apk: "bluez-dev;libffi-dev;openssl-dev;glib-dev;eudev-dev;libxml2-dev;libxslt-dev;libpng-dev;libjpeg-turbo-dev;tiff-dev;gmp-dev;mpfr-dev;mpc1-dev;ffmpeg-dev;yaml-dev;openblas-dev;fftw-dev;lapack-dev;gfortran;blas-dev;eigen-dev;freetype-dev;glew-dev;harfbuzz-dev;hdf5-dev;libdc1394-dev;libtbb-dev;mesa-dev;openexr-dev;openjpeg-dev;uchardet-dev;nasm;zlib-ng-dev"
           skip-binary: aiohttp;charset-normalizer;grpcio;multidict;SQLAlchemy;propcache;protobuf;pymicro-vad;yarl
           constraints: "homeassistant/package_constraints.txt"
           requirements-diff: "requirements_diff.txt"
           requirements: "requirements_all_wheels_${{ matrix.arch }}.txt"
-
-      - name: Upload wheels as artifacts
-        uses: actions/upload-artifact@v4.3.6
-        with:
-          name: integration-wheels-${{ matrix.arch }}-${{ matrix.abi }}
-          path: /tmp/wheels_output/**
-          retention-days: 30
-
-  build-complete-package:
-    name: Build complete Home Assistant package
-    if: github.repository_owner == 'yuanzhou029'
-    needs: [core, integrations]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@v6.2.0
-        with:
-          python-version-file: ".python-version"
-
-      - name: Download all built wheels
-        uses: actions/download-artifact@v8.0.0
-        with:
-          path: /tmp/all_wheels
-          pattern: '*-wheels-*'
-
-      - name: Install build tools
-        run: |
-          python -m pip install --upgrade pip setuptools wheel build
-
-      - name: Build Home Assistant main package
-        run: |
-          python -m build --wheel --outdir dist/
-
-      - name: Create complete package with precompiled dependencies
-        run: |
-          mkdir -p complete_package/dependencies
-          
-          # Copy the main Home Assistant wheel
-          cp dist/homeassistant-*.whl complete_package/
-          
-          # Flatten and copy all precompiled dependencies
-          find /tmp/all_wheels -name "*.whl" -exec cp {} complete_package/dependencies/ \;
-          
-          # Create installation instructions
-          echo "# Home Assistant Complete Installation Package" > complete_package/README_INSTALL.md
-          echo "" >> complete_package/README_INSTALL.md
-          echo "This package includes:" >> complete_package/README_INSTALL.md
-          echo "- Home Assistant main package: $(ls dist/homeassistant-*.whl | xargs basename)" >> complete_package/README_INSTALL.md
-          echo "- Precompiled dependencies: $(find complete_package/dependencies -name '*.whl' | wc -l) packages" >> complete_package/README_INSTALL.md
-          echo "" >> complete_package/README_INSTALL.md
-          echo "## Installation" >> complete_package/README_INSTALL.md
-          echo "" >> complete_package/README_INSTALL.md
-          echo "Install using pip with precompiled dependencies:" >> complete_package/README_INSTALL.md
-          echo "" >> complete_package/README_INSTALL.md
-          echo "\`\`\`bash" >> complete_package/README_INSTALL.md
-          echo "pip install homeassistant-*.whl \\" >> complete_package/README_INSTALL.md
-          echo "    --find-links dependencies/ \\" >> complete_package/README_INSTALL.md
-          echo "    --prefer-binary" >> complete_package/README_INSTALL.md
-          echo "\`\`\`" >> complete_package/README_INSTALL.md
-          echo "" >> complete_package/README_INSTALL.md
-          echo "This will use the precompiled wheels instead of compiling from source." >> complete_package/README_INSTALL.md
-
-      - name: Upload complete package
-        uses: actions/upload-artifact@v4.3.6
-        with:
-          name: homeassistant-complete-package
-          path: complete_package/
-          retention-days: 30
-
-  publish-complete-package:
-    name: Publish complete Home Assistant package to GitHub Releases
-    if: github.repository_owner == 'yuanzhou029' && (github.event_name == 'release' || github.event_name == 'workflow_dispatch')
-    needs: [build-complete-package]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6.0.2
-
-      - name: Download complete package artifact
-        uses: actions/download-artifact@v8.0.0
-        with:
-          name: homeassistant-complete-package
-          path: ./complete_package
-
-      - name: Create zip archive of complete package
-        run: |
-          cd complete_package
-          zip -r ../homeassistant-complete-package.zip ./
-          cd ..
-
-      - name: Get tag and version
-        id: version
-        run: |
-          # Extract version from the built homeassistant wheel if available
-          HA_WHEEL=$(find ./complete_package -name "homeassistant-*.whl" -type f | head -n 1)
-          if [ -n "$HA_WHEEL" ]; then
-            VERSION=$(echo $HA_WHEEL | sed -n 's/.*homeassistant-\([^-]*\)-.*/\1/p')
-            echo "version=$VERSION" >> $GITHUB_OUTPUT
-            echo "Found Home Assistant version: $VERSION"
-          else
-            # Use tag name if available, fallback to timestamp
-            if [ -n "${{ github.event.release.tag_name }}" ]; then
-              VERSION="${{ github.event.release.tag_name }}"
-              VERSION=${VERSION#v}
-            else
-              VERSION="build-$(date +%Y%m%d-%H%M%S)"
-            fi
-            echo "version=$VERSION" >> $GITHUB_OUTPUT
-            echo "Using version: $VERSION"
-          fi
-
-      - name: Prepare tag for release
-        id: tag
-        run: |
-          if [ "${{ github.event.release.tag_name }}" != "" ]; then
-            echo "tag_name=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
-          else
-            # Generate a tag if running via workflow dispatch
-            TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-            echo "tag_name=v${{ steps.version.outputs.version }}-build-$TIMESTAMP" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: "Home Assistant Complete Package v${{ steps.version.outputs.version }}"
-          tag_name: ${{ steps.tag.outputs.tag_name }}
-          body: |
-            Complete Home Assistant installation package with precompiled dependencies.
-            
-            This package contains:
-            - Home Assistant main package
-            - Precompiled dependency wheels
-            - Installation instructions
-            
-            To install: 
-            1. Download the zip file
-            2. Unzip and follow the installation instructions
-          draft: false
-          prerelease: false
-          files: |
-            homeassistant-complete-package.zip
-          generate_release_notes: false
