@@ -609,7 +609,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Dependency review
-        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+        uses: actions/dependency-review-action@05fe4576374b728f0c523d6a13d64c25081e0803 # v4.8.3
         with:
           license-check: false # We use our own license audit checks
 
@@ -852,6 +852,10 @@ jobs:
     needs:
       - info
       - base
+      - gen-requirements-all
+      - hassfest
+      - prek
+      - mypy
     steps:
       - name: Restore apt cache
         uses: actions/cache/restore@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
@@ -1396,7 +1400,7 @@ jobs:
         with:
           fail_ci_if_error: true
           flags: full-suite
-          token: ${{ secrets.CODECOV_TOKEN }} # zizmor: ignore[secrets-outside-env]
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   pytest-partial:
     name: Run tests Python ${{ matrix.python-version }} (${{ matrix.group }})
@@ -1566,7 +1570,7 @@ jobs:
         uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5.5.2
         with:
           fail_ci_if_error: true
-          token: ${{ secrets.CODECOV_TOKEN }} # zizmor: ignore[secrets-outside-env]
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   upload-test-results:
     name: Upload test results to Codecov
