@@ -136,7 +136,7 @@ jobs:
           sed -i "/uv/d" requirements_diff.txt
 
       - name: Build wheels
-        uses: yuanzhou029/hass-wheels@main  # 使用您创建的wheels工具
+        uses: yuanzhou029/hass-wheels@main  # 您创建的wheels工具
         with:
           abi: ${{ matrix.abi }}
           tag: musllinux_1_2
@@ -205,7 +205,7 @@ jobs:
           sed -i "/uv/d" requirements_diff.txt
 
       - name: Build wheels
-        uses: yuanzhou029/hass-wheels@main  # 使用您创建的wheels工具
+        uses: yuanzhou029/hass-wheels@main  # 您创建的wheels工具
         with:
           abi: ${{ matrix.abi }}
           tag: musllinux_1_2
