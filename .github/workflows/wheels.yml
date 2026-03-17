@@ -304,11 +304,7 @@ jobs:
 
   publish-complete-package:
     name: Publish complete Home Assistant package to GitHub Releases
-<<<<<<< HEAD
     if: github.repository_owner == 'yuanzhou029' && (github.event_name == 'release' || github.event_name == 'workflow_dispatch')
-=======
-    if: github.repository_owner == 'yuanzhou029'
->>>>>>> 270c967367539b588aa7c11fcf1ad40bfc9fee25
     needs: [build-complete-package]
     runs-on: ubuntu-latest
     permissions:
@@ -350,11 +346,22 @@ jobs:
             echo "Using version: $VERSION"
           fi
 
+      - name: Prepare tag for release
+        id: tag
+        run: |
+          if [ "${{ github.event.release.tag_name }}" != "" ]; then
+            echo "tag_name=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+          else
+            # Generate a tag if running via workflow dispatch
+            TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+            echo "tag_name=v${{ steps.version.outputs.version }}-build-$TIMESTAMP" >> $GITHUB_OUTPUT
+          fi
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: "Home Assistant Complete Package v${{ steps.version.outputs.version }}"
-          tag_name: ${{ github.event.release.tag_name || format('v{0}', steps.version.outputs.version) }}
+          tag_name: ${{ steps.tag.outputs.tag_name }}
           body: |
             Complete Home Assistant installation package with precompiled dependencies.
             
