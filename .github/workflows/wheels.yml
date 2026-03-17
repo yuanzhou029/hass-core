@@ -142,7 +142,7 @@ jobs:
           abi: ${{ matrix.abi }}
           tag: musllinux_1_2
           arch: ${{ matrix.arch }}
-          wheels-key: ${{ secrets.WHEELS_KEY }} # zizmor: ignore[secrets-outside-env]
+          # wheels-key: ${{ secrets.WHEELS_KEY }} # zizmor: ignore[secrets-outside-env]
           env-file: true
           apk: "libffi-dev;openssl-dev;yaml-dev;nasm;zlib-ng-dev"
           skip-binary: aiohttp;multidict;propcache;yarl;SQLAlchemy
