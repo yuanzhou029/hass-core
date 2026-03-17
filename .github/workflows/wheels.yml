@@ -42,6 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       should_publish: ${{ steps.check.outputs.should_publish }}
+      python_version: ${{ steps.python.outputs.python-version }}
     steps:
       - name: Checkout the repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -71,8 +72,9 @@ jobs:
           python -m venv venv
           . venv/bin/activate
           python --version
-          pip install "$(grep '^uv' < requirements.txt)"
-          uv pip install -r requirements.txt
+          pip install --upgrade pip setuptools wheel
+          pip install "$(grep '^uv' < requirements.txt)" || true
+          pip install -r requirements.txt
 
       - name: Create requirements_diff file
         run: |
@@ -125,79 +127,16 @@ jobs:
           name: requirements_all_wheels
           path: ./requirements_all_wheels_*.txt
 
-  core:
-    name: Build Core wheels ${{ matrix.abi }} for ${{ matrix.arch }} (musllinux_1_2)
+  build-wheels:
+    name: Build wheels for ${{ matrix.os }}-${{ matrix.arch }}
     if: github.repository_owner == 'yuanzhou029'
     needs: init
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        abi: ["cp314"]
-        arch: ["amd64", "aarch64"]
-        include:
-          - arch: amd64
-            os: ubuntu-latest
-          - arch: aarch64
-            os: ubuntu-24.04-arm
-    steps:
-      - name: Checkout the repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Download env_file
-        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
-        with:
-          name: env_file
-
-      - name: Download requirements_diff
-        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
-        with:
-          name: requirements_diff
-
-      - name: Adjust build env
-        run: |
-          # Don't build wheels for uv as uv requires a greater version of rust as currently available on alpine
-          sed -i "/uv/d" requirements.txt
-          sed -i "/uv/d" requirements_diff.txt
-
-      - name: Build wheels
-        uses: home-assistant/wheels@e5742a69d69f0e274e2689c998900c7d19652c21 # 2025.12.0
-        with:
-          abi: ${{ matrix.abi }}
-          tag: musllinux_1_2
-          arch: ${{ matrix.arch }}
-          # wheels-key: ${{ secrets.WHEELS_KEY }} # zizmor: ignore[secrets-outside-env]
-          env-file: true
-          apk: "libffi-dev;openssl-dev;yaml-dev;nasm;zlib-ng-dev"
-          skip-binary: aiohttp;multidict;propcache;yarl;SQLAlchemy
-          constraints: "homeassistant/package_constraints.txt"
-          requirements-diff: "requirements_diff.txt"
-          requirements: "requirements.txt"
-
-      - name: Upload core wheels artifacts
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
-        with:
-          name: core-wheels-${{ matrix.arch }}
-          path: ./output/*.whl
-          retention-days: 7
-
-  integrations:
-    name: Build wheels ${{ matrix.abi }} for ${{ matrix.arch }}
-    if: github.repository_owner == 'yuanzhou029'
-    needs: init
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        abi: ["cp314"]
-        arch: ["amd64", "aarch64"]
-        include:
-          - arch: amd64
-            os: ubuntu-latest
-          - arch: aarch64
-            os: ubuntu-24.04-arm
+        os: [ubuntu-latest]
+        arch: [x86_64, aarch64]
     steps:
       - name: Checkout the repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -219,61 +158,148 @@ jobs:
         with:
           name: requirements_all_wheels
 
-      - name: Adjust build env
-        run: |
-          # Do not pin numpy in wheels building
-          sed -i "/numpy/d" homeassistant/package_constraints.txt
-          # Don't build wheels for uv as uv requires a greater version of rust as currently available on alpine
-          sed -i "/uv/d" requirements.txt
-          sed -i "/uv/d" requirements_diff.txt
-
-      - name: Build wheels
-        uses: home-assistant/wheels@e5742a69d69f0e274e2689c998900c7d19652c21 # 2025.12.0
+      - name: Set up QEMU for cross-platform builds
+        if: matrix.arch != 'x86_64'
+        uses: docker/setup-qemu-action@v3
         with:
-          abi: ${{ matrix.abi }}
-          tag: musllinux_1_2
-          arch: ${{ matrix.arch }}
-          wheels-key: ${{ secrets.WHEELS_KEY }} # zizmor: ignore[secrets-outside-env]
-          env-file: true
-          apk: "bluez-dev;libffi-dev;openssl-dev;glib-dev;eudev-dev;libxml2-dev;libxslt-dev;libpng-dev;libjpeg-turbo-dev;tiff-dev;gmp-dev;mpfr-dev;mpc1-dev;ffmpeg-dev;yaml-dev;openblas-dev;fftw-dev;lapack-dev;gfortran;blas-dev;eigen-dev;freetype-dev;glew-dev;harfbuzz-dev;hdf5-dev;libdc1394-dev;libtbb-dev;mesa-dev;openexr-dev;openjpeg-dev;uchardet-dev;nasm;zlib-ng-dev"
-          skip-binary: aiohttp;charset-normalizer;grpcio;multidict;SQLAlchemy;propcache;protobuf;pymicro-vad;yarl
-          constraints: "homeassistant/package_constraints.txt"
-          requirements-diff: "requirements_diff.txt"
-          requirements: "requirements_all_wheels_${{ matrix.arch }}.txt"
+          platforms: arm64
 
-      - name: Upload integration wheels artifacts
+      - name: Load environment variables
+        run: |
+          source .env_file
+          export $(cut -d= -f1 .env_file)
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version-file: ".python-version"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            bluez-dev \
+            libffi-dev \
+            libssl-dev \
+            glib-dev \
+            eudev-dev \
+            libxml2-dev \
+            libxslt1-dev \
+            libpng-dev \
+            libjpeg-dev \
+            libtiff-dev \
+            libgmp-dev \
+            libmpfr-dev \
+            libmpc-dev \
+            ffmpeg \
+            libavformat-dev \
+            libavcodec-dev \
+            libavdevice-dev \
+            libavutil-dev \
+            libswscale-dev \
+            libswresample-dev \
+            libavfilter-dev \
+            yaml-dev \
+            openblas-dev \
+            fftw3-dev \
+            liblapack-dev \
+            gfortran \
+            libblas-dev \
+            eigen-dev \
+            libfreetype6-dev \
+            libglew-dev \
+            libharfbuzz-dev \
+            libhdf5-dev \
+            libdc1394-dev \
+            libtbb-dev \
+            mesa-common-dev \
+            libopenexr-dev \
+            libopenjp2-7-dev \
+            libuchardet-dev \
+            nasm \
+            zlib1g-dev \
+            pkg-config \
+            gcc-aarch64-linux-gnu \
+            libc6-dev-arm64-cross \
+            musl-tools
+
+      - name: Install Python build tools
+        run: |
+          python -m pip install --upgrade pip setuptools wheel build twine cibuildwheel==2.22.0
+
+      - name: Prepare build configuration
+        run: |
+          # Copy the main project files to ensure we can build the wheel
+          cp -r . ../source_project
+          cd ../source_project
+          
+          # Create temporary requirements file for building
+          if [ -f "requirements_all_wheels_amd64.txt" ]; then
+            cp requirements_all_wheels_amd64.txt temp_requirements.txt
+          elif [ -f "requirements_all_wheels_aarch64.txt" ]; then
+            cp requirements_all_wheels_aarch64.txt temp_requirements.txt
+          else
+            cp requirements.txt temp_requirements.txt
+          fi
+
+      - name: Build wheels using cibuildwheel
+        run: |
+          export CIBW_BUILD_VERBOSITY=1
+          export CIBW_ARCHS_LINUX=${{ matrix.arch }}
+          export CIBW_BUILD="cp314-*"
+          export CIBW_SKIP="pp* *-win32 *_i686 *-musllinux_*"
+          export CIBW_MANYLINUX_X86_64_IMAGE=manylinux_2_28
+          export CIBW_MANYLINUX_AARCH64_IMAGE=manylinux_2_28
+          
+          # Set environment variables for the build
+          export $(grep -v '^#' .env_file | xargs)
+          
+          # Build the wheels
+          python -m cibuildwheel --output-dir dist .
+        env:
+          CIBW_ENVIRONMENT_PASS_LINUX: "GRPC_PYTHON_BUILD_SYSTEM_OPENSSL GRPC_PYTHON_BUILD_WITH_CYTHON CI_BUILD ENABLE_HEADLESS REQUIRE_SQLALCHEMY_CEXT"
+          CIBW_BEFORE_BUILD_LINUX: "pip install --upgrade pip setuptools wheel"
+
+      - name: List built wheels
+        run: |
+          if [ -d dist ] && [ -n "$(ls -A dist/)" ]; then
+            echo "Built wheels:"
+            ls -la dist/
+          else
+            echo "No wheels were built, checking current directory..."
+            ls -la *.whl || echo "No wheels found"
+          fi
+
+      - name: Upload wheels artifacts
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: integration-wheels-${{ matrix.arch }}
-          path: ./output/*.whl
+          name: wheels-${{ matrix.arch }}
+          path: |
+            dist/*.whl
+            *.whl
           retention-days: 7
 
   collect-and-publish:
     name: Collect wheels and publish
     if: needs.init.outputs.should_publish == 'true'
-    needs: [init, core, integrations]
+    needs: [init, build-wheels]
     runs-on: ubuntu-latest
     environment: pypi  # 使用环境配置
     steps:
       - name: Create dist directory
         run: mkdir -p dist
 
-      - name: Download all core wheels
+      - name: Download all wheels
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
-          pattern: core-wheels-*
-          path: temp_core/
-
-      - name: Download all integration wheels
-        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
-        with:
-          pattern: integration-wheels-*
-          path: temp_integration/
+          pattern: wheels-*
+          path: temp_wheels/
 
       - name: Combine all wheels
         run: |
-          cp temp_core/*/*.whl dist/ 2>/dev/null || true
-          cp temp_integration/*/*.whl dist/ 2>/dev/null || true
+          # Find and copy all wheel files from different architectures
+          find temp_wheels/ -name "*.whl" -type f -exec cp {} dist/ \;
           echo "Found $(ls dist/*.whl | wc -l) wheels to publish"
 
       - name: Display wheels to publish
@@ -295,29 +321,23 @@ jobs:
 
   create-github-release:
     name: Create GitHub Release
-    needs: [init, core, integrations]
+    needs: [init, build-wheels]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - name: Create dist directory
         run: mkdir -p dist
 
-      - name: Download all core wheels
+      - name: Download all wheels
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
-          pattern: core-wheels-*
-          path: temp_core/
-
-      - name: Download all integration wheels
-        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
-        with:
-          pattern: integration-wheels-*
-          path: temp_integration/
+          pattern: wheels-*
+          path: temp_wheels/
 
       - name: Combine all wheels for release
         run: |
-          cp temp_core/*/*.whl dist/ 2>/dev/null || true
-          cp temp_integration/*/*.whl dist/ 2>/dev/null || true
+          # Find and copy all wheel files from different architectures
+          find temp_wheels/ -name "*.whl" -type f -exec cp {} dist/ \;
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
