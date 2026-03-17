@@ -101,7 +101,7 @@ jobs:
 
   core:
     name: Build Core wheels ${{ matrix.abi }} for ${{ matrix.arch }} (musllinux_1_2)
-    if: github.repository_owner == 'home-assistant'
+    if: github.repository_owner == 'yuanzhou029'
     needs: init
     runs-on: ${{ matrix.os }}
     strategy:
@@ -137,12 +137,16 @@ jobs:
           sed -i "/uv/d" requirements_diff.txt
 
       - name: Build wheels
-        uses: home-assistant/wheels@e5742a69d69f0e274e2689c998900c7d19652c21 # 2025.12.0
+        uses: yuanzhou029/hass-wheels@main  # 使用您创建的wheels工具
         with:
           abi: ${{ matrix.abi }}
           tag: musllinux_1_2
           arch: ${{ matrix.arch }}
-          wheels-key: ${{ secrets.WHEELS_KEY }} # zizmor: ignore[secrets-outside-env]
+          # 上传到本地路径而非服务器（如果您有WHEELS_KEY可以取消下面的注释）
+          local-wheels-repo-path: "/tmp/wheels_output"
+          wheels-host: ""
+          wheels-user: ""
+          # 保持原有配置
           env-file: true
           apk: "libffi-dev;openssl-dev;yaml-dev;nasm;zlib-ng-dev"
           skip-binary: aiohttp;multidict;propcache;yarl;SQLAlchemy
@@ -150,9 +154,16 @@ jobs:
           requirements-diff: "requirements_diff.txt"
           requirements: "requirements.txt"
 
+      - name: Upload wheels as artifacts
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name: core-wheels-${{ matrix.arch }}-${{ matrix.abi }}
+          path: /tmp/wheels_output/**
+          retention-days: 30
+
   integrations:
     name: Build wheels ${{ matrix.abi }} for ${{ matrix.arch }}
-    if: github.repository_owner == 'home-assistant'
+    if: github.repository_owner == 'yuanzhou029'  # 更改为您的用户名
     needs: init
     runs-on: ${{ matrix.os }}
     strategy:
@@ -195,15 +206,26 @@ jobs:
           sed -i "/uv/d" requirements_diff.txt
 
       - name: Build wheels
-        uses: home-assistant/wheels@e5742a69d69f0e274e2689c998900c7d19652c21 # 2025.12.0
+        uses: yuanzhou029/hass-wheels@main  # 使用您创建的wheels工具
         with:
           abi: ${{ matrix.abi }}
           tag: musllinux_1_2
           arch: ${{ matrix.arch }}
-          wheels-key: ${{ secrets.WHEELS_KEY }} # zizmor: ignore[secrets-outside-env]
+          # 上传到本地路径而非服务器（如果您有WHEELS_KEY可以取消下面的注释）
+          local-wheels-repo-path: "/tmp/wheels_output"
+          wheels-host: ""
+          wheels-user: ""
+          # 保持原有配置
           env-file: true
           apk: "bluez-dev;libffi-dev;openssl-dev;glib-dev;eudev-dev;libxml2-dev;libxslt-dev;libpng-dev;libjpeg-turbo-dev;tiff-dev;gmp-dev;mpfr-dev;mpc1-dev;ffmpeg-dev;yaml-dev;openblas-dev;fftw-dev;lapack-dev;gfortran;blas-dev;eigen-dev;freetype-dev;glew-dev;harfbuzz-dev;hdf5-dev;libdc1394-dev;libtbb-dev;mesa-dev;openexr-dev;openjpeg-dev;uchardet-dev;nasm;zlib-ng-dev"
           skip-binary: aiohttp;charset-normalizer;grpcio;multidict;SQLAlchemy;propcache;protobuf;pymicro-vad;yarl
           constraints: "homeassistant/package_constraints.txt"
           requirements-diff: "requirements_diff.txt"
           requirements: "requirements_all_wheels_${{ matrix.arch }}.txt"
+
+      - name: Upload wheels as artifacts
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name: integration-wheels-${{ matrix.arch }}-${{ matrix.abi }}
+          path: /tmp/wheels_output/**
+          retention-days: 30
