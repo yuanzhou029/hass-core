@@ -1,6 +1,6 @@
-# yaml-lint disable-line rule:truthy
 name: Build wheels
 
+# yamllint disable-line rule:truthy
 on:
   workflow_dispatch:
   schedule:
@@ -16,8 +16,7 @@ on:
       - "requirements.txt"
       - "script/gen_requirements_all.py"
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name}}
@@ -54,7 +53,7 @@ jobs:
           if [[ "${GITHUB_EVENT_NAME}" =~ (schedule|workflow_dispatch) ]]; then
             touch requirements_diff.txt
           else
-            curl -s -o requirements_diff.txt https://raw.githubusercontent.com/yuanzhou029/hass-core/main/requirements.txt
+            curl -s -o requirements_diff.txt https://raw.githubusercontent.com/home-assistant/core/master/requirements.txt
           fi
 
       - name: Write env-file
@@ -62,9 +61,15 @@ jobs:
           (
             echo "GRPC_PYTHON_BUILD_SYSTEM_OPENSSL=true"
             echo "GRPC_PYTHON_BUILD_WITH_CYTHON=true"
+
+            # Fix out of memory issues with rust
             echo "CARGO_NET_GIT_FETCH_WITH_CLI=true"
+
+            # OpenCV headless installation
             echo "CI_BUILD=1"
             echo "ENABLE_HEADLESS=1"
+
+            # Use C-Extension for SQLAlchemy
             echo "REQUIRE_SQLALCHEMY_CEXT=1"
           ) > .env_file
 
@@ -95,8 +100,8 @@ jobs:
           path: ./requirements_all_wheels_*.txt
 
   core:
-    name: Build Core wheels ${{ matrix.abi }} for ${{ matrix.arch }}
-    if: github.repository_owner == 'yuanzhou029'
+    name: Build Core wheels ${{ matrix.abi }} for ${{ matrix.arch }} (musllinux_1_2)
+    if: github.repository_owner == 'home-assistant'
     needs: init
     runs-on: ${{ matrix.os }}
     strategy:
@@ -127,52 +132,27 @@ jobs:
 
       - name: Adjust build env
         run: |
+          # Don't build wheels for uv as uv requires a greater version of rust as currently available on alpine
           sed -i "/uv/d" requirements.txt
           sed -i "/uv/d" requirements_diff.txt
-          rm -rf build/ dist/ *.egg-info homeassistant.egg-info/
-          find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
-      - name: Build Core wheels
-        env:
-          GRPC_PYTHON_BUILD_SYSTEM_OPENSSL: "true"
-          GRPC_PYTHON_BUILD_WITH_CYTHON: "true"
-          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-          CI_BUILD: "1"
-          ENABLE_HEADLESS: "1"
-          REQUIRE_SQLALCHEMY_CEXT: "1"
-        run: |
-          python -m pip install --upgrade pip build "setuptools>=75.1.0" "wheel>=0.43.0" "twine>=5.0.0"
-          mkdir -p dist
-          
-          echo "Building homeassistant wheel..."
-          python -m build --wheel --outdir dist
-          
-          echo "Core wheel building completed."
-          ls -la dist/ || echo "No wheels built"
-
-      - name: Upload Core wheels to PyPI
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: |
-          if [ -n "$(ls dist/*.whl 2>/dev/null)" ]; then
-            echo "Uploading core wheels for ${{ matrix.arch }} to PyPI..."
-            python -m twine upload --skip-existing --verbose dist/*.whl 2>&1 | tee upload.log
-            
-            # 检查是否有license-file错误
-            if grep -q "license-file" upload.log; then
-              echo "WARNING: license-file metadata issue detected, but continuing..."
-              # 不中断，因为这可能是第三方包的问题
-            fi
-            echo "Successfully uploaded core wheels to PyPI."
-          else
-            echo "No core wheel files found in dist/ to upload to PyPI."
-            exit 1
-          fi
+      - name: Build wheels
+        uses: home-assistant/wheels@e5742a69d69f0e274e2689c998900c7d19652c21 # 2025.12.0
+        with:
+          abi: ${{ matrix.abi }}
+          tag: musllinux_1_2
+          arch: ${{ matrix.arch }}
+          wheels-key: ${{ secrets.WHEELS_KEY }} # zizmor: ignore[secrets-outside-env]
+          env-file: true
+          apk: "libffi-dev;openssl-dev;yaml-dev;nasm;zlib-ng-dev"
+          skip-binary: aiohttp;multidict;propcache;yarl;SQLAlchemy
+          constraints: "homeassistant/package_constraints.txt"
+          requirements-diff: "requirements_diff.txt"
+          requirements: "requirements.txt"
 
   integrations:
-    name: Build Integration wheels ${{ matrix.abi }} for ${{ matrix.arch }}
-    if: github.repository_owner == 'yuanzhou029'
+    name: Build wheels ${{ matrix.abi }} for ${{ matrix.arch }}
+    if: github.repository_owner == 'home-assistant'
     needs: init
     runs-on: ${{ matrix.os }}
     strategy:
@@ -208,63 +188,22 @@ jobs:
 
       - name: Adjust build env
         run: |
+          # Do not pin numpy in wheels building
           sed -i "/numpy/d" homeassistant/package_constraints.txt
+          # Don't build wheels for uv as uv requires a greater version of rust as currently available on alpine
           sed -i "/uv/d" requirements.txt
           sed -i "/uv/d" requirements_diff.txt
-          rm -rf build/ dist/ *.egg-info homeassistant.egg-info/
-          find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
-      - name: Build Integration wheels
-        env:
-          GRPC_PYTHON_BUILD_SYSTEM_OPENSSL: "true"
-          GRPC_PYTHON_BUILD_WITH_CYTHON: "true"
-          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-          CI_BUILD: "1"
-          ENABLE_HEADLESS: "1"
-          REQUIRE_SQLALCHEMY_CEXT: "1"
-        run: |
-          python -m pip install --upgrade pip build "setuptools>=75.1.0" "wheel>=0.43.0" "twine>=5.0.0"
-          mkdir -p dist
-          
-          if [ "${{ matrix.arch }}" = "amd64" ]; then
-            REQ_FILE="requirements_all_wheels_amd64.txt"
-          else
-            REQ_FILE="requirements_all_wheels_aarch64.txt"
-          fi
-          
-          if [ -f "$REQ_FILE" ]; then
-            echo "Using requirements file: $REQ_FILE"
-            while IFS= read -r line; do
-              [[ "$line" =~ ^[[:space:]]*# ]] && continue
-              [[ -z "$line" ]] && continue
-              if [[ "$line" =~ ^[a-zA-Z] ]]; then
-                echo "Building wheel for: $line"
-                pip wheel --wheel-dir dist --no-deps "$line" 2>&1 | grep -v "license-file" || true
-              fi
-            done < "$REQ_FILE"
-          else
-            echo "Requirements file $REQ_FILE not found, skipping integration wheels"
-          fi
-          
-          echo "Integration wheel building completed."
-          ls -la dist/ || echo "No wheels built"
-
-      - name: Upload Integration wheels to PyPI
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: |
-          if [ -n "$(ls dist/*.whl 2>/dev/null)" ]; then
-            echo "Uploading integration wheels for ${{ matrix.arch }} to PyPI..."
-            python -m twine upload --skip-existing --verbose dist/*.whl 2>&1 | tee upload.log
-            
-            # 检查是否有license-file错误
-            if grep -q "license-file" upload.log; then
-              echo "WARNING: license-file metadata issue detected, but continuing..."
-              # 不中断，因为这可能是第三方包的问题
-            fi
-            echo "Successfully uploaded integration wheels to PyPI."
-          else
-            echo "No integration wheel files found in dist/ to upload to PyPI."
-            exit 1
-          fi
+      - name: Build wheels
+        uses: home-assistant/wheels@e5742a69d69f0e274e2689c998900c7d19652c21 # 2025.12.0
+        with:
+          abi: ${{ matrix.abi }}
+          tag: musllinux_1_2
+          arch: ${{ matrix.arch }}
+          wheels-key: ${{ secrets.WHEELS_KEY }} # zizmor: ignore[secrets-outside-env]
+          env-file: true
+          apk: "bluez-dev;libffi-dev;openssl-dev;glib-dev;eudev-dev;libxml2-dev;libxslt-dev;libpng-dev;libjpeg-turbo-dev;tiff-dev;gmp-dev;mpfr-dev;mpc1-dev;ffmpeg-dev;yaml-dev;openblas-dev;fftw-dev;lapack-dev;gfortran;blas-dev;eigen-dev;freetype-dev;glew-dev;harfbuzz-dev;hdf5-dev;libdc1394-dev;libtbb-dev;mesa-dev;openexr-dev;openjpeg-dev;uchardet-dev;nasm;zlib-ng-dev"
+          skip-binary: aiohttp;charset-normalizer;grpcio;multidict;SQLAlchemy;propcache;protobuf;pymicro-vad;yarl
+          constraints: "homeassistant/package_constraints.txt"
+          requirements-diff: "requirements_diff.txt"
+          requirements: "requirements_all_wheels_${{ matrix.arch }}.txt"
