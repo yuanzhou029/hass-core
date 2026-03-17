@@ -297,7 +297,7 @@ jobs:
 
   publish-complete-package:
     name: Publish complete Home Assistant package to GitHub Releases
-    if: github.repository_owner == 'yuanzhou029' && github.event_name == 'release'
+    if: github.repository_owner == 'yuanzhou029'
     needs: [build-complete-package]
     runs-on: ubuntu-latest
     permissions:
