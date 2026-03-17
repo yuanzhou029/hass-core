@@ -294,3 +294,65 @@ jobs:
           name: homeassistant-complete-package
           path: complete_package/
           retention-days: 30
+
+  publish-to-github-releases:
+    name: Publish artifacts to GitHub Releases
+    if: github.repository_owner == 'yuanzhou029' && github.event_name == 'workflow_dispatch'
+    needs: [build-complete-package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6.0.2
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8.0.0
+        with:
+          path: ./downloads
+
+      - name: Prepare release assets directory
+        run: |
+          mkdir -p ./release_assets
+          # Copy all wheel files from different artifact directories
+          find ./downloads -name "*.whl" -exec cp {} ./release_assets/ \;
+          
+          # Create a summary of what's being released
+          echo "# Release Assets Summary" > ./release_assets/ASSETS_SUMMARY.md
+          echo "Generated on: $(date)" >> ./release_assets/ASSETS_SUMMARY.md
+          echo "" >> ./release_assets/ASSETS_SUMMARY.md
+          echo "## Files included:" >> ./release_assets/ASSETS_SUMMARY.md
+          for file in ./release_assets/*.whl; do
+            if [ -f "$file" ]; then
+              echo "- $(basename $file) ($(wc -c < $file | tr -d ' ') bytes)" >> ./release_assets/ASSETS_SUMMARY.md
+            fi
+          done
+
+      - name: Get current version
+        id: version
+        run: |
+          # Extract version from the built homeassistant wheel if available
+          HA_WHEEL=$(find ./downloads/homeassistant-complete-package -name "homeassistant-*.whl" -type f | head -n 1)
+          if [ -n "$HA_WHEEL" ]; then
+            VERSION=$(echo $HA_WHEEL | sed -n 's/.*homeassistant-\([^-]*\)-.*/\1/p')
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "Found Home Assistant version: $VERSION"
+          else
+            # Fallback to a timestamp-based version if no HA wheel found
+            TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+            echo "version=build_$TIMESTAMP" >> $GITHUB_OUTPUT
+            echo "Using timestamp-based version: $TIMESTAMP"
+          fi
+
+      - name: Create Release and Upload Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Home Assistant Prebuilt Dependencies v${{ steps.version.outputs.version }}"
+          tag_name: "v${{ steps.version.outputs.version }}_deps"
+          body_path: ./release_assets/ASSETS_SUMMARY.md
+          draft: false
+          prerelease: false
+          files: |
+            ./release_assets/*.whl
+            ./downloads/homeassistant-complete-package/*
+          generate_release_notes: false
