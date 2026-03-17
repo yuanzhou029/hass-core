@@ -295,9 +295,9 @@ jobs:
           path: complete_package/
           retention-days: 30
 
-  publish-to-github-releases:
-    name: Publish artifacts to GitHub Releases
-    if: github.repository_owner == 'yuanzhou029' && github.event_name == 'workflow_dispatch'
+  publish-complete-package:
+    name: Publish complete Home Assistant package to GitHub Releases
+    if: github.repository_owner == 'yuanzhou029' && github.event_name == 'release'
     needs: [build-complete-package]
     runs-on: ubuntu-latest
     permissions:
@@ -306,53 +306,61 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6.0.2
 
-      - name: Download all artifacts
+      - name: Download complete package artifact
         uses: actions/download-artifact@v8.0.0
         with:
-          path: ./downloads
+          name: homeassistant-complete-package
+          path: ./complete_package
 
-      - name: Prepare release assets directory
+      - name: Create zip archive of complete package
         run: |
-          mkdir -p ./release_assets
-          # Copy all wheel files from different artifact directories
-          find ./downloads -name "*.whl" -exec cp {} ./release_assets/ \;
-          
-          # Create a summary of what's being released
-          echo "# Release Assets Summary" > ./release_assets/ASSETS_SUMMARY.md
-          echo "Generated on: $(date)" >> ./release_assets/ASSETS_SUMMARY.md
-          echo "" >> ./release_assets/ASSETS_SUMMARY.md
-          echo "## Files included:" >> ./release_assets/ASSETS_SUMMARY.md
-          for file in ./release_assets/*.whl; do
-            if [ -f "$file" ]; then
-              echo "- $(basename $file) ($(wc -c < $file | tr -d ' ') bytes)" >> ./release_assets/ASSETS_SUMMARY.md
-            fi
-          done
+          cd complete_package
+          zip -r ../homeassistant-complete-package.zip ./
+          cd ..
 
       - name: Get current version
         id: version
         run: |
           # Extract version from the built homeassistant wheel if available
-          HA_WHEEL=$(find ./downloads/homeassistant-complete-package -name "homeassistant-*.whl" -type f | head -n 1)
+          HA_WHEEL=$(find ./complete_package -name "homeassistant-*.whl" -type f | head -n 1)
           if [ -n "$HA_WHEEL" ]; then
             VERSION=$(echo $HA_WHEEL | sed -n 's/.*homeassistant-\([^-]*\)-.*/\1/p')
             echo "version=$VERSION" >> $GITHUB_OUTPUT
             echo "Found Home Assistant version: $VERSION"
           else
-            # Fallback to a timestamp-based version if no HA wheel found
-            TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-            echo "version=build_$TIMESTAMP" >> $GITHUB_OUTPUT
-            echo "Using timestamp-based version: $TIMESTAMP"
+            # Fallback to a tag-based version if running from a tagged release
+            if [ -n "${{ github.event.release.tag_name }}" ]; then
+              VERSION="${{ github.event.release.tag_name }}"
+              # Remove 'v' prefix if present
+              VERSION=${VERSION#v}
+              echo "version=$VERSION" >> $GITHUB_OUTPUT
+              echo "Using tag-based version: $VERSION"
+            else
+              # Fallback to a timestamp-based version
+              TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+              echo "version=build_$TIMESTAMP" >> $GITHUB_OUTPUT
+              echo "Using timestamp-based version: $TIMESTAMP"
+            fi
           fi
 
-      - name: Create Release and Upload Assets
+      - name: Create Release and Upload Complete Package
         uses: softprops/action-gh-release@v2
         with:
-          name: "Home Assistant Prebuilt Dependencies v${{ steps.version.outputs.version }}"
-          tag_name: "v${{ steps.version.outputs.version }}_deps"
-          body_path: ./release_assets/ASSETS_SUMMARY.md
+          name: "Home Assistant Complete Package v${{ steps.version.outputs.version }}"
+          tag_name: ${{ github.event.release.tag_name }}
+          body: |
+            Complete Home Assistant installation package with precompiled dependencies.
+            
+            This package contains:
+            - Home Assistant main package
+            - Precompiled dependency wheels
+            - Installation instructions
+            
+            To install: 
+            1. Download the zip file
+            2. Unzip and follow the installation instructions
           draft: false
           prerelease: false
           files: |
-            ./release_assets/*.whl
-            ./downloads/homeassistant-complete-package/*
+            homeassistant-complete-package.zip
           generate_release_notes: false

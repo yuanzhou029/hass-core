@@ -2,42 +2,37 @@
 
 ## Overview
 
-This document explains how to publish built Home Assistant wheels to GitHub Releases using the enhanced workflow.
+This document explains how to publish the complete Home Assistant package to GitHub Releases using the enhanced workflow.
 
 ## Updated Workflow
 
-The `.github/workflows/wheels.yml` workflow has been enhanced with a new job: `publish-to-github-releases`
+The `.github/workflows/wheels.yml` workflow has been enhanced with a new job: `publish-complete-package`
 
-This job:
-1. Collects all built wheels from previous jobs
-2. Creates a release with all wheel packages
-3. Publishes to GitHub Releases with a summary
+This job only publishes the complete installation package (`homeassistant-complete-package.zip`) to GitHub Releases.
 
 ## How to Publish
 
 ### Prerequisites
 - Ensure the main workflow (building wheels) has completed successfully
 - Must be repository owner (yuanzhou029) with proper permissions
+- Only triggers when a GitHub Release is published
 
 ### Steps
 
-1. **Run the workflow manually**:
+1. **Run the build workflow first**:
    - Go to the "Actions" tab in your repository
    - Select "Build Core Wheels with Custom Wheels Tool" workflow
    - Click "Run workflow" button
-   - Select "Run workflow" (it should run via `workflow_dispatch`)
+   - Make sure the "build-complete-package" job completes successfully
 
-2. **Wait for build completion**:
-   - The workflow will execute the build jobs first:
-     - init
-     - core (build core wheels)
-     - integrations (build integration wheels)
-     - build-complete-package (create complete package)
+2. **Create a GitHub Release**:
+   - Go to the "Releases" tab in your repository
+   - Click "Draft a new release" or "Create a new release"
+   - The release will trigger the `publish-complete-package` job automatically
 
-3. **Automatic release**:
-   - Once all building jobs complete successfully
-   - The `publish-to-github-releases` job will trigger automatically
-   - This job collects all artifacts and creates a GitHub Release
+3. **Automatic release publishing**:
+   - The `publish-complete-package` job will attach the `homeassistant-complete-package.zip` to the release
+   - This zip contains the complete installation package with precompiled dependencies
 
 ## Release Contents
 
