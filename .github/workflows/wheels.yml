@@ -1,4 +1,4 @@
-name: Build Core Wheels with Custom Wheels Tool
+name: wheels更新打包
 
 on:
   workflow_dispatch:
