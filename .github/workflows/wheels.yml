@@ -101,7 +101,7 @@ jobs:
 
   core:
     name: Build Core wheels ${{ matrix.abi }} for ${{ matrix.arch }} (musllinux_1_2)
-    if: github.repository_owner == 'home-assistant'
+    if: github.repository_owner == 'yuanzhou029'
     needs: init
     runs-on: ${{ matrix.os }}
     strategy:
@@ -152,7 +152,7 @@ jobs:
 
   integrations:
     name: Build wheels ${{ matrix.abi }} for ${{ matrix.arch }}
-    if: github.repository_owner == 'yuanzhou029'
+    if: github.repository_owner == 'yuanzhou'
     needs: init
     runs-on: ${{ matrix.os }}
     strategy:
