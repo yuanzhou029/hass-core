@@ -41,7 +41,7 @@ def gather_skills() -> list[tuple[str, Path]]:
         if not skill_file.exists():
             continue
 
-        skill_content = skill_file.read_text()
+        skill_content = skill_file.read_text(encoding='utf-8')
 
         # Extract skill name from frontmatter if present
         skill_name = skill_dir.name
@@ -69,7 +69,7 @@ def generate_output() -> str:
     output_parts: list[str] = [GENERATED_MESSAGE]
 
     # Add AGENTS.md content
-    agents_content = AGENTS_FILE.read_text()
+    agents_content = AGENTS_FILE.read_text(encoding='utf-8')
     output_parts.append(agents_content.strip())
     output_parts.append("")
 
@@ -99,7 +99,7 @@ def main(validate: bool = False) -> int:
             print(f"Error: {OUTPUT_FILE} does not exist")
             return 1
 
-        existing = OUTPUT_FILE.read_text()
+        existing = OUTPUT_FILE.read_text(encoding='utf-8')
         if existing != content:
             print(f"Error: {OUTPUT_FILE} is out of date")
             print("Please run: python -m script.gen_copilot_instructions")
@@ -108,7 +108,7 @@ def main(validate: bool = False) -> int:
         print(f"{OUTPUT_FILE} is up to date")
         return 0
 
-    OUTPUT_FILE.write_text(content)
+    OUTPUT_FILE.write_text(content, encoding='utf-8')
     print(f"Generated {OUTPUT_FILE}")
     return 0
 

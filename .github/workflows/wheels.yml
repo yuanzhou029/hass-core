@@ -289,7 +289,7 @@ jobs:
     needs: [build-complete-package]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # 发布完整包权限
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6.0.2
