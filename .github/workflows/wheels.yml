@@ -268,30 +268,39 @@ jobs:
         run: |
           mkdir -p complete_package/dependencies
           
-          # Copy the main xoai-core wheel
-          cp dist/xoai-core-*.whl complete_package/
+          # Find and copy the main wheel (could be homeassistant or xoai-core)
+          MAIN_WHEEL=$(ls dist/*.whl | head -n 1)
+          if [ -n "$MAIN_WHEEL" ]; then
+            cp "$MAIN_WHEEL" complete_package/
+            
+            # Extract package name for documentation
+            PACKAGE_NAME=$(basename "$MAIN_WHEEL" | cut -d'-' -f1)
+            
+            # Create installation instructions
+            echo "# $PACKAGE_NAME Complete Installation Package" > complete_package/README_INSTALL.md
+            echo "" >> complete_package/README_INSTALL.md
+            echo "This package includes:" >> complete_package/README_INSTALL.md
+            echo "- $PACKAGE_NAME main package: $(basename "$MAIN_WHEEL")" >> complete_package/README_INSTALL.md
+            echo "- Precompiled dependencies: $(find complete_package/dependencies -name '*.whl' | wc -l) packages" >> complete_package/README_INSTALL.md
+            echo "" >> complete_package/README_INSTALL.md
+            echo "## Installation" >> complete_package/README_INSTALL.md
+            echo "" >> complete_package/README_INSTALL.md
+            echo "Install using pip with precompiled dependencies:" >> complete_package/README_INSTALL.md
+            echo "" >> complete_package/README_INSTALL.md
+            echo "\`\`\`bash" >> complete_package/README_INSTALL.md
+            echo "pip install $PACKAGE_NAME-*.whl \\" >> complete_package/README_INSTALL.md
+            echo "    --find-links dependencies/ \\" >> complete_package/README_INSTALL.md
+            echo "    --prefer-binary" >> complete_package/README_INSTALL.md
+            echo "\`\`\`" >> complete_package/README_INSTALL.md
+            echo "" >> complete_package/README_INSTALL.md
+            echo "This will use the precompiled wheels instead of compiling from source." >> complete_package/README_INSTALL.md
+          else
+            echo "ERROR: No wheel file found in dist/ directory!"
+            exit 1
+          fi
           
           # Flatten and copy all precompiled dependencies
           find /tmp/all_wheels -name "*.whl" -exec cp {} complete_package/dependencies/ \;
-          
-          # Create installation instructions
-          echo "# xoai-core Complete Installation Package" > complete_package/README_INSTALL.md
-          echo "" >> complete_package/README_INSTALL.md
-          echo "This package includes:" >> complete_package/README_INSTALL.md
-          echo "- xoai-core main package: $(ls dist/xoai-core-*.whl | xargs basename)" >> complete_package/README_INSTALL.md
-          echo "- Precompiled dependencies: $(find complete_package/dependencies -name '*.whl' | wc -l) packages" >> complete_package/README_INSTALL.md
-          echo "" >> complete_package/README_INSTALL.md
-          echo "## Installation" >> complete_package/README_INSTALL.md
-          echo "" >> complete_package/README_INSTALL.md
-          echo "Install using pip with precompiled dependencies:" >> complete_package/README_INSTALL.md
-          echo "" >> complete_package/README_INSTALL.md
-          echo "\`\`\`bash" >> complete_package/README_INSTALL.md
-          echo "pip install xoai-core-*.whl \\" >> complete_package/README_INSTALL.md
-          echo "    --find-links dependencies/ \\" >> complete_package/README_INSTALL.md
-          echo "    --prefer-binary" >> complete_package/README_INSTALL.md
-          echo "\`\`\`" >> complete_package/README_INSTALL.md
-          echo "" >> complete_package/README_INSTALL.md
-          echo "This will use the precompiled wheels instead of compiling from source." >> complete_package/README_INSTALL.md
 
       - name: Upload complete package
         uses: actions/upload-artifact@v4.3.6
@@ -326,12 +335,13 @@ jobs:
       - name: Get tag and version
         id: version
         run: |
-          # Extract version from the built homeassistant wheel if available
-          HA_WHEEL=$(find ./complete_package -name "xoai-core-*.whl" -type f | head -n 1)
-          if [ -n "$HA_WHEEL" ]; then
-            VERSION=$(echo $HA_WHEEL | sed -n 's/.*homeassistant-\([^-]*\)-.*/\1/p')
+          # Extract version from the built wheel if available
+          WHEEL_FILE=$(find ./complete_package -name "*.whl" -type f | head -n 1)
+          if [ -n "$WHEEL_FILE" ]; then
+            # Extract version from wheel filename: package-name-version-other-info.whl
+            VERSION=$(basename "$WHEEL_FILE" | cut -d'-' -f2)
             echo "version=$VERSION" >> $GITHUB_OUTPUT
-            echo "Found xoai-core version: $VERSION"
+            echo "Found package version: $VERSION"
           else
             # Use tag name if available, fallback to timestamp
             if [ -n "${{ github.event.release.tag_name }}" ]; then
