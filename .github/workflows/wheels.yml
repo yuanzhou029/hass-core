@@ -235,7 +235,7 @@ jobs:
           retention-days: 30
 
   build-complete-package:
-    name: Build complete Home Assistant package
+    name: Build complete xoai-core package
     if: github.repository_owner == 'yuanzhou029'
     needs: [core, integrations]
     runs-on: ubuntu-latest
@@ -260,7 +260,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel build
 
-      - name: Build Home Assistant main package
+      - name: Build xoai-core main package
         run: |
           python -m build --wheel --outdir dist/
 
@@ -268,17 +268,17 @@ jobs:
         run: |
           mkdir -p complete_package/dependencies
           
-          # Copy the main Home Assistant wheel
-          cp dist/homeassistant-*.whl complete_package/
+          # Copy the main xoai-core wheel
+          cp dist/xoai-core-*.whl complete_package/
           
           # Flatten and copy all precompiled dependencies
           find /tmp/all_wheels -name "*.whl" -exec cp {} complete_package/dependencies/ \;
           
           # Create installation instructions
-          echo "# Home Assistant Complete Installation Package" > complete_package/README_INSTALL.md
+          echo "# xoai-core Complete Installation Package" > complete_package/README_INSTALL.md
           echo "" >> complete_package/README_INSTALL.md
           echo "This package includes:" >> complete_package/README_INSTALL.md
-          echo "- Home Assistant main package: $(ls dist/homeassistant-*.whl | xargs basename)" >> complete_package/README_INSTALL.md
+          echo "- xoai-core main package: $(ls dist/xoai-core-*.whl | xargs basename)" >> complete_package/README_INSTALL.md
           echo "- Precompiled dependencies: $(find complete_package/dependencies -name '*.whl' | wc -l) packages" >> complete_package/README_INSTALL.md
           echo "" >> complete_package/README_INSTALL.md
           echo "## Installation" >> complete_package/README_INSTALL.md
@@ -286,7 +286,7 @@ jobs:
           echo "Install using pip with precompiled dependencies:" >> complete_package/README_INSTALL.md
           echo "" >> complete_package/README_INSTALL.md
           echo "\`\`\`bash" >> complete_package/README_INSTALL.md
-          echo "pip install homeassistant-*.whl \\" >> complete_package/README_INSTALL.md
+          echo "pip install xoai-core-*.whl \\" >> complete_package/README_INSTALL.md
           echo "    --find-links dependencies/ \\" >> complete_package/README_INSTALL.md
           echo "    --prefer-binary" >> complete_package/README_INSTALL.md
           echo "\`\`\`" >> complete_package/README_INSTALL.md
@@ -301,7 +301,7 @@ jobs:
           retention-days: 30
 
   publish-complete-package:
-    name: Publish complete Home Assistant package to GitHub Releases
+    name: Publish complete xoai-core package to GitHub Releases
     if: github.repository_owner == 'yuanzhou029' && (github.event_name == 'release' || github.event_name == 'workflow_dispatch')
     needs: [build-complete-package]
     runs-on: ubuntu-latest
@@ -327,11 +327,11 @@ jobs:
         id: version
         run: |
           # Extract version from the built homeassistant wheel if available
-          HA_WHEEL=$(find ./complete_package -name "homeassistant-*.whl" -type f | head -n 1)
+          HA_WHEEL=$(find ./complete_package -name "xoai-core-*.whl" -type f | head -n 1)
           if [ -n "$HA_WHEEL" ]; then
             VERSION=$(echo $HA_WHEEL | sed -n 's/.*homeassistant-\([^-]*\)-.*/\1/p')
             echo "version=$VERSION" >> $GITHUB_OUTPUT
-            echo "Found Home Assistant version: $VERSION"
+            echo "Found xoai-core version: $VERSION"
           else
             # Use tag name if available, fallback to timestamp
             if [ -n "${{ github.event.release.tag_name }}" ]; then
@@ -358,13 +358,13 @@ jobs:
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "Home Assistant Complete Package v${{ steps.version.outputs.version }}"
+          name: "xoai-core Complete Package v${{ steps.version.outputs.version }}"
           tag_name: ${{ steps.tag.outputs.tag_name }}
           body: |
-            Complete Home Assistant installation package with precompiled dependencies.
+            Complete xoai-core installation package with precompiled dependencies.
             
             This package contains:
-            - Home Assistant main package
+            - xoai-core main package
             - Precompiled dependency wheels
             - Installation instructions
             
