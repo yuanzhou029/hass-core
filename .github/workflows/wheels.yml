@@ -1,26 +1,7 @@
 name: wheels更新打包
 
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: "0 4 * * *"
-  push:
-    branches:
-      - dev
-      - rc
-    paths:
-      - ".github/workflows/wheels.yml"
-      - "homeassistant/package_constraints.txt"
-      - "requirements_all.txt"
-      - "requirements.txt"
-      - "script/gen_requirements_all.py"
-    tags:
-      - 'v*'
   release:
-    types: [published]
-  pull_request:
-    branches:
-      - main
 
 permissions: {}
 
