@@ -39,7 +39,7 @@ habluetooth==5.10.2
 hass-nabucasa==2.0.0
 hassil==3.5.0
 home-assistant-bluetooth==1.13.1
-xoai-frontend==20260315.1
+xoai-frontend==20260315.4
 home-assistant-intents==2026.3.3
 httpx==0.28.1
 ifaddr==0.2.0
